@@ -1,0 +1,429 @@
+package com.dub.calorietracker.ui
+
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.dub.calorietracker.calc.WeekPlanner
+import com.dub.calorietracker.data.EntrySource
+import com.dub.calorietracker.data.FoodEntry
+import com.dub.calorietracker.data.FoodMemory
+import kotlinx.coroutines.delay
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun TodayScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit, onOpenCamera: () -> Unit) {
+    val state by vm.state.collectAsStateWithLifecycle()
+    val date by vm.selectedDate.collectAsStateWithLifecycle()
+    val today = LocalDate.now()
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    var text by rememberSaveable { mutableStateOf("") }
+    var editing by remember { mutableStateOf<FoodEntry?>(null) }
+    // Up to 3 photos of the same meal (different angles), sent together.
+    val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(AppViewModel.MAX_PHOTOS)) { uris ->
+        if (uris.isNotEmpty()) { vm.estimateFromPhotos(uris, text); text = "" }
+    }
+
+    // Ticks so the cooldown countdown stays current.
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(state.ai.cooldownUntil) {
+        while (true) { now = System.currentTimeMillis(); delay(30_000) }
+    }
+    val coolingDown = state.ai.cooldownUntil > now
+
+    val plan = state.plan
+    val targets = WeekPlanner.weekTargets(state, date)
+    val dayCal = WeekPlanner.dayTarget(state, date)
+    val goal = WeekPlanner.macroTargets(dayCal, state.macros)
+    val eaten = WeekPlanner.eaten(state.entries, date)
+    val dayEntries = state.entries.filter { it.date == date.toString() }.sortedBy { it.time }
+    val zigzag = WeekPlanner.isZigzag(state)
+    val isHigh = zigzag && WeekPlanner.isHighDay(targets, WeekPlanner.dayIndex(date))
+    val laterHigh = if (zigzag && !date.isBefore(today)) WeekPlanner.bestLaterHighDay(state, date) else null
+    val notice = state.shiftNotices[date.toString()]
+
+    val title = when (date) {
+        today -> "Today"; today.minusDays(1) -> "Yesterday"; today.plusDays(1) -> "Tomorrow"
+        else -> date.format(DateTimeFormatter.ofPattern("EEEE"))
+    }
+
+    LazyColumn(modifier.fillMaxSize()) {
+        item {
+            ScreenHeader(
+                title, date.format(DateTimeFormatter.ofPattern("EEEE, MMMM d")),
+                onPrev = { vm.selectedDate.value = date.minusDays(1) },
+                onNext = { vm.selectedDate.value = date.plusDays(1) },
+            )
+        }
+
+        if (plan == null) {
+            item {
+                SectionCard {
+                    Text("Set up your plan first", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("Enter your age, height, weight and activity to get your daily calorie target.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = onSetUpPlan) { Text("Set up plan") }
+                }
+            }
+            return@LazyColumn
+        }
+
+        // ----- summary: eaten · gauge · target, then macros -----
+        item {
+            SectionCard(padding = 24.dp) {
+                if (zigzag) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                        Pill(if (isHigh) "High day" else "Regular day", highlight = isHigh)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Stat(num(eaten.calories), "Eaten", Modifier.weight(1f))
+                    CalorieGauge(eaten.calories, dayCal.toDouble())
+                    Stat(num(dayCal), "Target", Modifier.weight(1f))
+                }
+                Spacer(Modifier.height(16.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    MacroColumn("Carbs", eaten.carbs, goal.carbs, Modifier.weight(1f))
+                    MacroColumn("Protein", eaten.protein, goal.protein, Modifier.weight(1f))
+                    MacroColumn("Fat", eaten.fat, goal.fat, Modifier.weight(1f))
+                }
+            }
+        }
+
+        // ----- zigzag notices (only when there's something to say) -----
+        if (notice != null || laterHigh != null) item {
+            SectionCard(padding = 8.dp) {
+                if (notice != null) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Bolt, null, tint = Amber)
+                    Spacer(Modifier.width(8.dp))
+                    Text(notice, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    IconButton(onClick = { vm.dismissNotice(date) }) {
+                        Icon(Icons.Filled.Close, "Dismiss", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                if (laterHigh != null) {
+                    val laterDate = WeekPlanner.weekStart(date).plusDays(laterHigh.toLong())
+                    TextButton(onClick = { vm.useHighDay(date) }) {
+                        Text("Use ${laterDate.format(DateTimeFormatter.ofPattern("EEEE"))}'s higher calories " +
+                            "(${num(targets[laterHigh])}) today")
+                    }
+                }
+            }
+        }
+
+        // ----- add food -----
+        item {
+            SectionCard {
+                Text("Add food", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(12.dp))
+                if (coolingDown) {
+                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.errorContainer).padding(12.dp)) {
+                        Text("AI limit reached", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onErrorContainer)
+                        Text("${state.ai.cooldownMessage} Photos & AI estimates are available again in " +
+                            "${AppViewModel.formatWait(state.ai.cooldownUntil - now)}. Saved foods and manual entry still work.",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                    }
+                    Spacer(Modifier.height(12.dp))
+                }
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    placeholder = { Text("What did you eat? e.g. peanut butter jelly") },
+                    trailingIcon = {
+                        IconButton(enabled = text.isNotBlank() && !busy, onClick = { vm.estimateFromText(text); text = "" }) {
+                            Icon(Icons.AutoMirrored.Filled.Send, "Estimate")
+                        }
+                    },
+                    minLines = 1, maxLines = 4,
+                )
+                val suggestions = FoodMemory.suggestions(text, state.savedFoods)
+                if (suggestions.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        suggestions.forEach { f ->
+                            SuggestionChip(onClick = { vm.useSaved(f, text); text = "" },
+                                label = { Text("${f.name} · ${num(f.calories)} cal") })
+                        }
+                    }
+                }
+                Text("Tip: type a note before picking from the gallery to help the AI (e.g. \"large bowl, extra cheese\").",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp))
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(enabled = !busy && !coolingDown, onClick = onOpenCamera, modifier = Modifier.weight(1f).height(48.dp)) {
+                        Icon(Icons.Filled.CameraAlt, null); Spacer(Modifier.width(8.dp)); Text("Photo")
+                    }
+                    FilledTonalButton(enabled = !busy && !coolingDown, modifier = Modifier.weight(1f).height(48.dp), onClick = {
+                        pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    }) {
+                        Icon(Icons.Filled.PhotoLibrary, null); Spacer(Modifier.width(8.dp)); Text("Gallery")
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    TextButton(onClick = { vm.startManual() }) {
+                        Text("Enter calories manually", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                if (busy) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Estimating with ${state.ai.provider.label}…", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+        }
+
+        // ----- logged foods -----
+        item {
+            SectionCard(padding = 0.dp) {
+                Text("Logged" + if (dayEntries.isNotEmpty()) " · ${dayEntries.size}" else "",
+                    style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 8.dp))
+                if (dayEntries.isEmpty()) {
+                    Text("Nothing logged yet.", color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 20.dp))
+                }
+                dayEntries.forEachIndexed { i, e ->
+                    if (i > 0) HorizontalDivider(Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                    Row(Modifier.fillMaxWidth().clickable { editing = e }.padding(start = 20.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(e.name.replaceFirstChar { it.uppercase() } + if (e.servings != 1.0) " ×${trimNum(e.servings)}" else "",
+                                fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${num(e.calories)} cal · P ${num(e.protein)}g · C ${num(e.carbs)}g · F ${num(e.fat)}g",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        IconButton(onClick = { editing = e }) {
+                            Icon(Icons.Filled.Edit, "Edit", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        IconButton(onClick = { vm.deleteEntry(e.id) }) {
+                            Icon(Icons.Filled.Delete, "Delete", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                if (dayEntries.isNotEmpty()) Spacer(Modifier.height(10.dp))
+            }
+        }
+        item { Spacer(Modifier.height(16.dp)) }
+    }
+
+    editing?.let { e ->
+        EditEntryDialog(e,
+            onDismiss = { editing = null },
+            onSave = { vm.updateEntry(it); editing = null },
+            onDelete = { vm.deleteEntry(e.id); editing = null })
+    }
+}
+
+@Composable
+private fun Pill(text: String, highlight: Boolean) {
+    Row(
+        Modifier.clip(RoundedCornerShape(50))
+            .background(if (highlight) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (highlight) { Icon(Icons.Filled.Bolt, null, Modifier.size(14.dp), tint = Amber); Spacer(Modifier.width(4.dp)) }
+        Text(text, style = MaterialTheme.typography.labelMedium,
+            color = if (highlight) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+fun trimNum(v: Double): String = if (v % 1.0 == 0.0) v.toInt().toString() else "%.2f".format(v).trimEnd('0').trimEnd('.')
+
+@Composable
+private fun NumberField(label: String, value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = { v -> if (v.isEmpty() || v.matches(Regex("""\d*\.?\d*"""))) onChange(v) },
+        label = { Text(label) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        modifier = modifier,
+    )
+}
+
+/** Review / edit an estimate before logging it. */
+@Composable
+fun ReviewDialog(p: Pending, onCancel: () -> Unit, onConfirm: (Pending, Double, Boolean) -> Unit) {
+    var name by remember(p) { mutableStateOf(p.name) }
+    var cal by remember(p) { mutableStateOf(numText(p.calories)) }
+    var pro by remember(p) { mutableStateOf(numText(p.protein)) }
+    var carb by remember(p) { mutableStateOf(numText(p.carbs)) }
+    var fat by remember(p) { mutableStateOf(numText(p.fat)) }
+    var servings by remember(p) { mutableStateOf(1.0) }
+    var rememberIt by remember(p) { mutableStateOf(true) }
+    val c = cal.toDoubleOrNull() ?: 0.0
+
+    AlertDialog(
+        onDismissRequest = onCancel,
+        containerColor = MaterialTheme.colorScheme.surface,
+        title = { Text(if (p.source == EntrySource.MANUAL) "Add food" else "Review estimate") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                if (p.notes.isNotBlank()) {
+                    Text(p.notes + if (p.confidence.isNotBlank()) " (confidence: ${p.confidence})" else "",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(8.dp))
+                }
+                OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    NumberField("Calories", cal, { cal = it }, Modifier.weight(1f))
+                    NumberField("Protein g", pro, { pro = it }, Modifier.weight(1f))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    NumberField("Carbs g", carb, { carb = it }, Modifier.weight(1f))
+                    NumberField("Fat g", fat, { fat = it }, Modifier.weight(1f))
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Servings", Modifier.weight(1f))
+                    TextButton(onClick = { servings = (servings - 0.5).coerceAtLeast(0.5) }) { Text("−") }
+                    Text(trimNum(servings), fontWeight = FontWeight.Bold)
+                    TextButton(onClick = { servings += 0.5 }) { Text("+") }
+                }
+                Text("Total: ${num(c * servings)} cal", fontWeight = FontWeight.SemiBold)
+                if (p.items.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("Breakdown", style = MaterialTheme.typography.labelLarge)
+                    p.items.forEach {
+                        Text("• ${listOf(it.quantity, it.name).filter(String::isNotBlank).joinToString(" ")}: ${num(it.calories)} cal",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                if (p.savedFoodId == null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(rememberIt, { rememberIt = it })
+                        Text("Remember \"${name.ifBlank { "this" }}\" so I can log it again without the AI",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(enabled = name.isNotBlank(), onClick = {
+                onConfirm(p.copy(name = name.trim(), calories = c, protein = pro.toDoubleOrNull() ?: 0.0,
+                    carbs = carb.toDoubleOrNull() ?: 0.0, fat = fat.toDoubleOrNull() ?: 0.0), servings, rememberIt)
+            }) { Text("Log it") }
+        },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
+    )
+}
+
+private fun Double.roundTo1() = kotlin.math.round(this * 10) / 10
+
+/** Blank instead of "0" so typing doesn't produce "0450". */
+private fun numText(v: Double) = if (v == 0.0) "" else trimNum(v.roundTo1())
+
+@Composable
+fun EditEntryDialog(e: FoodEntry, onDismiss: () -> Unit, onSave: (FoodEntry) -> Unit, onDelete: () -> Unit) {
+    var name by remember { mutableStateOf(e.name) }
+    var cal by remember { mutableStateOf(trimNum(e.calories.roundTo1())) }
+    var pro by remember { mutableStateOf(trimNum(e.protein.roundTo1())) }
+    var carb by remember { mutableStateOf(trimNum(e.carbs.roundTo1())) }
+    var fat by remember { mutableStateOf(trimNum(e.fat.roundTo1())) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        title = { Text("Edit entry") },
+        text = {
+            Column {
+                OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    NumberField("Calories", cal, { cal = it }, Modifier.weight(1f))
+                    NumberField("Protein g", pro, { pro = it }, Modifier.weight(1f))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    NumberField("Carbs g", carb, { carb = it }, Modifier.weight(1f))
+                    NumberField("Fat g", fat, { fat = it }, Modifier.weight(1f))
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                onSave(e.copy(name = name.trim().ifEmpty { e.name }, calories = cal.toDoubleOrNull() ?: 0.0,
+                    protein = pro.toDoubleOrNull() ?: 0.0, carbs = carb.toDoubleOrNull() ?: 0.0,
+                    fat = fat.toDoubleOrNull() ?: 0.0))
+            }) { Text("Save") }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onDelete) { Text("Delete", color = OverColor) }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        },
+    )
+}

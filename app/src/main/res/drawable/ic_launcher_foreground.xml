@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- plate -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M54,32a18,18 0 1,0 0.01,0z" />
+    <path android:fillColor="#2E7D32"
+        android:pathData="M54,38a12,12 0 1,0 0.01,0z" />
+    <!-- progress bar -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M38,72h32a3,3 0 0 1 0,6h-32a3,3 0 0 1 0,-6z" />
+    <path android:fillColor="#FFC107"
+        android:pathData="M38,72h18v6h-18a3,3 0 0 1 0,-6z" />
+</vector>
