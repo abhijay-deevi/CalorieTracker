@@ -68,6 +68,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dub.calorietracker.ai.ImageUtils
+import com.dub.calorietracker.R
+import androidx.compose.ui.res.painterResource
 import com.dub.calorietracker.calc.WeekPlanner
 import com.dub.calorietracker.data.FoodMemory
 import kotlinx.coroutines.Dispatchers
@@ -85,6 +87,7 @@ fun CaptureScreen(vm: AppViewModel, onClose: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val state by vm.state.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    val busyMessage by vm.busyMessage.collectAsStateWithLifecycle()
 
     var note by rememberSaveable { mutableStateOf("") }
     // Photo URIs, newline-separated so it survives rotation via rememberSaveable.
@@ -270,7 +273,10 @@ fun CaptureScreen(vm: AppViewModel, onClose: () -> Unit) {
                             }
                         } else Spacer(Modifier.size(72.dp))
                         Spacer(Modifier.weight(1f))
-                        Spacer(Modifier.size(48.dp)) // balances the gallery button
+                        FilledIconButton(
+                            onClick = { scanFoodBarcode(ctx, onCode = vm::lookupBarcode, onError = { vm.error.value = it }) },
+                            colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.Black.copy(alpha = 0.5f), contentColor = Color.White),
+                        ) { Icon(painterResource(R.drawable.ic_barcode), "Scan a barcode") }
                     }
                 }
 
@@ -279,7 +285,7 @@ fun CaptureScreen(vm: AppViewModel, onClose: () -> Unit) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             CircularProgressIndicator(color = Color.White)
                             Spacer(Modifier.height(12.dp))
-                            Text("Estimating calories…", color = Color.White, fontWeight = FontWeight.SemiBold)
+                            Text(busyMessage.ifBlank { "Estimating calories…" }, color = Color.White, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }

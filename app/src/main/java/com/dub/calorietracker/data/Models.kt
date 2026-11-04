@@ -69,7 +69,7 @@ data class FoodItem(
 )
 
 @Serializable
-enum class EntrySource { PHOTO, TEXT, SAVED, MANUAL }
+enum class EntrySource { PHOTO, TEXT, SAVED, MANUAL, BARCODE }
 
 @Serializable
 data class FoodEntry(
@@ -118,6 +118,8 @@ data class AiSettings(
     /** Epoch millis until which AI requests are paused because the provider rate-limited us. */
     val cooldownUntil: Long = 0,
     val cooldownMessage: String = "",
+    /** Gemini only: let it look up branded packaged foods in Open Food Facts (free). */
+    val webSearch: Boolean = true,
 ) {
     fun key(p: AiProvider = provider) = apiKeys[p].orEmpty()
     fun model(p: AiProvider = provider) = models[p]?.takeIf { it.isNotBlank() } ?: p.defaultModel

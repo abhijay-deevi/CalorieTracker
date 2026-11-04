@@ -71,6 +71,10 @@ import com.dub.calorietracker.calc.WeekPlanner
 import com.dub.calorietracker.data.EntrySource
 import com.dub.calorietracker.data.FoodEntry
 import com.dub.calorietracker.data.FoodMemory
+import com.dub.calorietracker.R
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import kotlinx.coroutines.delay
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -82,6 +86,8 @@ fun TodayScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit, o
     val date by vm.selectedDate.collectAsStateWithLifecycle()
     val today = LocalDate.now()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    val busyMessage by vm.busyMessage.collectAsStateWithLifecycle()
+    val ctx = LocalContext.current
     var text by rememberSaveable { mutableStateOf("") }
     var editing by remember { mutableStateOf<FoodEntry?>(null) }
     // Up to 3 photos of the same meal (different angles), sent together.
@@ -229,6 +235,12 @@ fun TodayScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit, o
                     }) {
                         Icon(Icons.Filled.PhotoLibrary, null); Spacer(Modifier.width(8.dp)); Text("Gallery")
                     }
+                    // Barcode: exact label values from Open Food Facts — no AI, works even during AI cooldowns.
+                    FilledTonalIconButton(
+                        enabled = !busy,
+                        onClick = { scanFoodBarcode(ctx, onCode = vm::lookupBarcode, onError = { vm.error.value = it }) },
+                        modifier = Modifier.size(48.dp),
+                    ) { Icon(painterResource(R.drawable.ic_barcode), "Scan a barcode") }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                     TextButton(onClick = { vm.startManual() }) {
@@ -239,7 +251,7 @@ fun TodayScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit, o
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(8.dp))
-                        Text("Estimating with ${state.ai.provider.label}…", style = MaterialTheme.typography.bodyMedium)
+                        Text(busyMessage.ifBlank { "Estimating…" }, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
@@ -264,6 +276,13 @@ fun TodayScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit, o
                                 fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text("${num(e.calories)} cal · P ${num(e.protein)}g · C ${num(e.carbs)}g · F ${num(e.fat)}g",
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            // Several foods in one message → list them, scaled by servings.
+                            if (e.items.size > 1) e.items.forEach { item ->
+                                Text("· ${item.name}" + (if (item.quantity.isNotBlank()) " (${item.quantity})" else "") +
+                                    " — ${num(item.calories * e.servings)} cal",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
                         }
                         IconButton(onClick = { editing = e }) {
                             Icon(Icons.Filled.Edit, "Edit", tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -308,7 +327,7 @@ private fun NumberField(label: String, value: String, onChange: (String) -> Unit
     OutlinedTextField(
         value = value,
         onValueChange = { v -> if (v.isEmpty() || v.matches(Regex("""\d*\.?\d*"""))) onChange(v) },
-        label = { Text(label) },
+        label = if (label.isEmpty()) null else { { Text(label) } },
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         modifier = modifier,
@@ -317,13 +336,22 @@ private fun NumberField(label: String, value: String, onChange: (String) -> Unit
 
 /** Review / edit an estimate before logging it. */
 @Composable
-fun ReviewDialog(p: Pending, onCancel: () -> Unit, onConfirm: (Pending, Double, Boolean) -> Unit) {
+fun ReviewDialog(
+    p: Pending,
+    onCancel: () -> Unit,
+    onConfirm: (Pending, Double, Boolean) -> Unit,
+    busy: Boolean = false,
+    /** Non-null for AI estimates: send a correction like "I meant 2 sandwiches". */
+    onRefine: ((String) -> Unit)? = null,
+) {
+    var correction by remember(p) { mutableStateOf("") }
     var name by remember(p) { mutableStateOf(p.name) }
     var cal by remember(p) { mutableStateOf(numText(p.calories)) }
     var pro by remember(p) { mutableStateOf(numText(p.protein)) }
     var carb by remember(p) { mutableStateOf(numText(p.carbs)) }
     var fat by remember(p) { mutableStateOf(numText(p.fat)) }
-    var servings by remember(p) { mutableStateOf(1.0) }
+    var servingsText by remember(p) { mutableStateOf("1") }
+    val servings = servingsText.toDoubleOrNull()?.takeIf { it > 0 } ?: 0.0
     var rememberIt by remember(p) { mutableStateOf(true) }
     val c = cal.toDoubleOrNull() ?: 0.0
 
@@ -333,9 +361,44 @@ fun ReviewDialog(p: Pending, onCancel: () -> Unit, onConfirm: (Pending, Double, 
         title = { Text(if (p.source == EntrySource.MANUAL) "Add food" else "Review estimate") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
+                // ----- item breakdown, like a food-log table -----
+                if (p.items.size > 1 || (p.items.size == 1 && p.source != EntrySource.BARCODE)) {
+                    p.items.forEach { item ->
+                        Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.Top) {
+                            Column(Modifier.weight(1f)) {
+                                Text(item.name.replaceFirstChar { it.uppercase() } +
+                                    if (item.quantity.isNotBlank()) " (${item.quantity})" else "",
+                                    style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                                Text("P ${num(item.protein)}g · C ${num(item.carbs)}g · F ${num(item.fat)}g",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Text("${num(item.calories)}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                }
                 if (p.notes.isNotBlank()) {
                     Text(p.notes + if (p.confidence.isNotBlank()) " (confidence: ${p.confidence})" else "",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(8.dp))
+                }
+                // ----- correct it like a chat reply -----
+                if (onRefine != null) {
+                    OutlinedTextField(
+                        value = correction,
+                        onValueChange = { correction = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        enabled = !busy,
+                        placeholder = { Text("Something off? e.g. \"I meant 2 sandwiches\"") },
+                        trailingIcon = {
+                            if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            else IconButton(enabled = correction.isNotBlank(), onClick = { onRefine(correction) }) {
+                                Icon(Icons.AutoMirrored.Filled.Send, "Fix estimate")
+                            }
+                        },
+                        maxLines = 3,
+                    )
                     Spacer(Modifier.height(8.dp))
                 }
                 OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -350,19 +413,14 @@ fun ReviewDialog(p: Pending, onCancel: () -> Unit, onConfirm: (Pending, Double, 
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Servings", Modifier.weight(1f))
-                    TextButton(onClick = { servings = (servings - 0.5).coerceAtLeast(0.5) }) { Text("−") }
-                    Text(trimNum(servings), fontWeight = FontWeight.Bold)
-                    TextButton(onClick = { servings += 0.5 }) { Text("+") }
+                    TextButton(onClick = { servingsText = trimNum((servings - 0.5).coerceAtLeast(0.5)) }) { Text("−") }
+                    NumberField("", servingsText, { servingsText = it }, Modifier.width(80.dp))
+                    TextButton(onClick = { servingsText = trimNum(servings + 0.5) }) { Text("+") }
+                }
+                if (p.servingLabel != null) {
+                    Text(p.servingLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Text("Total: ${num(c * servings)} cal", fontWeight = FontWeight.SemiBold)
-                if (p.items.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text("Breakdown", style = MaterialTheme.typography.labelLarge)
-                    p.items.forEach {
-                        Text("• ${listOf(it.quantity, it.name).filter(String::isNotBlank).joinToString(" ")}: ${num(it.calories)} cal",
-                            style = MaterialTheme.typography.bodySmall)
-                    }
-                }
                 if (p.savedFoodId == null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(rememberIt, { rememberIt = it })
@@ -373,7 +431,7 @@ fun ReviewDialog(p: Pending, onCancel: () -> Unit, onConfirm: (Pending, Double, 
             }
         },
         confirmButton = {
-            Button(enabled = name.isNotBlank(), onClick = {
+            Button(enabled = !busy && name.isNotBlank() && servings > 0, onClick = {
                 onConfirm(p.copy(name = name.trim(), calories = c, protein = pro.toDoubleOrNull() ?: 0.0,
                     carbs = carb.toDoubleOrNull() ?: 0.0, fat = fat.toDoubleOrNull() ?: 0.0), servings, rememberIt)
             }) { Text("Log it") }

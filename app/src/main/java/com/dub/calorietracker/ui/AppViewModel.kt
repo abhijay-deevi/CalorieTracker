@@ -8,6 +8,7 @@ import com.dub.calorietracker.ai.AiException
 import com.dub.calorietracker.ai.AiRateLimitException
 import com.dub.calorietracker.ai.FoodEstimator
 import com.dub.calorietracker.ai.ImageUtils
+import com.dub.calorietracker.ai.OpenFoodFacts
 import com.dub.calorietracker.calc.WeekPlanner
 import com.dub.calorietracker.data.AiProvider
 import com.dub.calorietracker.data.AppState
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 import java.time.LocalDate
 import java.util.UUID
 
@@ -41,6 +43,8 @@ data class Pending(
     val sourceText: String? = null,
     /** Set when this came from a remembered food (no AI used). */
     val savedFoodId: String? = null,
+    /** What "1 serving" means, e.g. "1 bar (40 g)" — shown next to the servings box. */
+    val servingLabel: String? = null,
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -50,6 +54,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val selectedDate = MutableStateFlow(LocalDate.now())
     val pending = MutableStateFlow<Pending?>(null)
     val busy = MutableStateFlow(false)
+    /** What's happening while [busy], e.g. "Looking up barcode…". */
+    val busyMessage = MutableStateFlow("")
     val error = MutableStateFlow<String?>(null)
 
     private fun newId() = UUID.randomUUID().toString()
@@ -96,7 +102,78 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         pending.value = Pending(name = "", calories = 0.0, protein = 0.0, carbs = 0.0, fat = 0.0, source = EntrySource.MANUAL)
     }
 
-    private fun runAi(text: String?, images: List<Uri>, source: EntrySource) {
+    /**
+     * Scanned barcode → exact label values from Open Food Facts (free, no AI, works during AI cooldowns).
+     * Products scanned before are remembered, so re-scanning works offline and instantly.
+     */
+    fun lookupBarcode(barcode: String) {
+        val code = barcode.filter(Char::isDigit)
+        if (code.isEmpty()) { error.value = "That doesn't look like a food barcode."; return }
+        val alias = "barcode $code"
+        FoodMemory.exactMatch(alias, state.value.savedFoods)?.let { f ->
+            pending.value = Pending(
+                name = f.name, calories = f.calories, protein = f.protein, carbs = f.carbs, fat = f.fat,
+                items = f.items, notes = "Scanned before — from your saved foods.", source = EntrySource.BARCODE,
+                sourceText = alias, savedFoodId = f.id, servingLabel = f.description.takeIf { it.isNotBlank() },
+            )
+            return
+        }
+        busy.value = true
+        busyMessage.value = "Looking up barcode…"
+        error.value = null
+        viewModelScope.launch {
+            try {
+                val p = withContext(Dispatchers.IO) { OpenFoodFacts.lookup(code) }
+                if (p == null) {
+                    error.value = "That product isn't in the Open Food Facts database yet. " +
+                        "Take a photo of the nutrition label (or the food) instead and the AI will read it."
+                } else {
+                    val serving = if (p.perServing) p.servingSize?.let { "1 serving = $it" } ?: "1 serving" else "1 serving = 100 g"
+                    pending.value = Pending(
+                        name = p.name, calories = p.calories, protein = p.protein, carbs = p.carbs, fat = p.fat,
+                        items = listOf(FoodItem(name = p.name, quantity = serving.removePrefix("1 serving = "),
+                            calories = p.calories, protein = p.protein, carbs = p.carbs, fat = p.fat)),
+                        notes = "From the product's nutrition label (Open Food Facts)." +
+                            if (!p.perServing) " Values are per 100 g — set servings to grams eaten ÷ 100." else "",
+                        source = EntrySource.BARCODE, sourceText = alias, servingLabel = serving,
+                    )
+                }
+            } catch (e: AiException) {
+                error.value = e.message
+            } catch (e: Exception) {
+                error.value = "Couldn't look up that barcode: ${e.message}"
+            } finally {
+                busy.value = false
+            }
+        }
+    }
+
+    // What the current estimate was made from, so a correction can resend it.
+    private var lastText: String? = null
+    private var lastImages: List<Uri> = emptyList()
+
+    /**
+     * "I meant 2 of the sandwiches" — re-asks the AI with the original message/photos, its previous answer
+     * and the user's correction, like replying in a chat.
+     */
+    fun refine(p: Pending, correction: String) {
+        val fix = correction.trim()
+        if (fix.isEmpty()) return
+        val prompt = buildString {
+            lastText?.let { appendLine("Original message: $it"); appendLine() }
+            appendLine("Your previous estimate was:")
+            p.items.forEach {
+                appendLine("- ${listOf(it.quantity, it.name).filter(String::isNotBlank).joinToString(" ")}: " +
+                    "${it.calories.roundToInt()} cal, ${it.protein.roundToInt()} g protein, ${it.carbs.roundToInt()} g carbs, ${it.fat.roundToInt()} g fat")
+            }
+            appendLine()
+            appendLine("The user's correction: $fix")
+            append("Apply the correction and return the FULL corrected meal (all items, not just the changed ones).")
+        }
+        runAi(prompt, lastImages, p.source, sourceText = lastText ?: p.sourceText)
+    }
+
+    private fun runAi(text: String?, images: List<Uri>, source: EntrySource, sourceText: String? = text) {
         val s = state.value
         val now = System.currentTimeMillis()
         if (s.ai.cooldownUntil > now) {
@@ -105,6 +182,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         busy.value = true
+        busyMessage.value = "Estimating calories…"
         error.value = null
         viewModelScope.launch {
             try {
@@ -113,9 +191,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     val known = s.savedFoods.sortedByDescending { it.timesUsed }
                     FoodEstimator.create(s.ai).estimate(text, jpegs, known)
                 }
+                lastText = sourceText
+                lastImages = images
                 pending.value = Pending(
                     name = est.name, calories = est.calories, protein = est.protein, carbs = est.carbs, fat = est.fat,
-                    items = est.items, notes = est.notes, confidence = est.confidence, source = source, sourceText = text,
+                    items = est.items, notes = est.notes, confidence = est.confidence, source = source, sourceText = sourceText,
                 )
             } catch (e: AiRateLimitException) {
                 val until = System.currentTimeMillis() + e.retryAfterSeconds * 1000
@@ -151,7 +231,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             else if (remember && p.name.isNotBlank()) {
                 foods = FoodMemory.remember(
                     foods, p.name, p.sourceText,
-                    description = p.items.joinToString(", ") { listOf(it.quantity, it.name).filter(String::isNotBlank).joinToString(" ") },
+                    description = p.servingLabel
+                        ?: p.items.joinToString(", ") { listOf(it.quantity, it.name).filter(String::isNotBlank).joinToString(" ") },
                     calories = p.calories, protein = p.protein, carbs = p.carbs, fat = p.fat,
                     items = p.items, newId = ::newId,
                 )
@@ -202,6 +283,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun clearCooldown() = repo.update { it.copy(ai = it.ai.copy(cooldownUntil = 0, cooldownMessage = "")) }
     fun setMacros(m: MacroSplit) = repo.update { it.copy(macros = m) }
     fun setAutoDetect(on: Boolean) = repo.update { it.copy(autoDetectHighDays = on) }
+    fun setWebSearch(on: Boolean) = repo.update { it.copy(ai = it.ai.copy(webSearch = on)) }
 
     companion object {
         /** Photos per meal — enough angles to judge portions without making requests huge. */

@@ -22,6 +22,8 @@ data class Estimate(
     val items: List<FoodItem>,
     val confidence: String,
     val notes: String,
+    /** The AI's own list of every food it saw — used to catch dropped items. */
+    val mentioned: List<String> = emptyList(),
 ) {
     val calories get() = items.sumOf { it.calories }
     val protein get() = items.sumOf { it.protein }
@@ -46,7 +48,7 @@ interface FoodEstimator {
             if (key.isEmpty()) throw AiException("Add your ${settings.provider.label} API key in Settings first.")
             val model = settings.model()
             return when (settings.provider) {
-                AiProvider.GEMINI -> GeminiEstimator(key, model)
+                AiProvider.GEMINI -> GeminiEstimator(key, model, lookups = settings.webSearch)
                 AiProvider.OPENAI -> OpenAiEstimator(key, model)
                 AiProvider.CLAUDE -> ClaudeEstimator(key, model)
             }
@@ -61,19 +63,54 @@ text description of what they ate. Estimate calories and macronutrients as accur
 using typical US portion sizes when amounts are not given. If a photo is included, estimate portion
 sizes from visual cues (plate size, utensils, packaging). Break the meal into its main items.
 
+Don't lowball. Calorie trackers usually fail by UNDER-counting, so when unsure lean toward the realistic
+middle-to-high end: use standard USDA-style values for a typical serving (e.g. a slice of banana bread
+≈ 190-200 kcal, a slice of sandwich bread ≈ 80, a slice of cheese ≈ 100), and remember home cooking —
+especially Indian dishes — and home baking use generous oil, ghee, butter and sugar.
+
+For generic foods (salmon, chicken, rice, curry, vegetables...), work it out like a dietitian: estimate how
+much is there from the photo (compare against the plate, utensils, hand), turn that into a weight or volume,
+then apply standard nutrition values for that food and cooking style. Always put the estimated amount in
+"quantity" (e.g. "~5 oz / 140 g", "~1.5 cups") so the user can check it.
+
+The user writes casually, the way they'd text a friend: typos ("sandwhiches", "tostitas"), loose amounts
+("like 3 or so", "a little"), several foods in one message, and brand names (Fairlife, Orgain, Barebells,
+Brookside, Tostitos...). Read it charitably and include EVERY food and drink mentioned — never drop one.
+Use the user's amounts exactly ("1.5 cup", "2 scoops", "one serving ... like 130 cals" means 130 calories).
+If they give calories for something, use their number. They often eat Indian home cooking (paneer bhurji,
+bitter gourd fry, rice with curry, jaggery) — use realistic home-style portions and oil. Phrases like "next
+day", "for breakfast" or "for snack" are just context, not food. When a phrase is ambiguous (e.g. "2 of the
+bread pepper jack paneer bhurji" probably means 2 sandwiches), choose the most likely meaning and say so in
+"notes" so the user can correct it.
+
 The user has foods saved from earlier. If the user refers to one of them (even loosely, e.g. "pb&j"
 for "peanut butter jelly"), reuse its saved values exactly (scaled if they say a different amount).
 
 Reply with ONLY a JSON object, no markdown, in this exact shape:
 {
+  "foods_mentioned": ["every separate food or drink in the message/photo, in order — e.g. fairlife milk, orgain powder, rice, ..."],
   "name": "short everyday name for this meal, lowercase, 1-5 words, e.g. peanut butter jelly",
   "items": [
     {"name": "white bread", "quantity": "2 slices", "calories": 160, "protein_g": 5, "carbs_g": 30, "fat_g": 2}
   ],
   "confidence": "low | medium | high",
-  "notes": "one short sentence about your assumptions"
+  "notes": "one or two short sentences about your assumptions; if a guess could change the total by 150+ calories, ask about it (e.g. were the slices thin or thick?)"
 }
+Fill "foods_mentioned" FIRST, then give one entry in "items" for every food in that list (a food's parts,
+like the bread and cheese of a sandwich, may be separate items). Long messages often cover a whole day
+(breakfast, lunch, pre-workout, snack...) — the last foods matter as much as the first.
 If the image or text is not food, return "items": [] and explain in "notes".
+""".trimIndent()
+
+    /** Added when the Open Food Facts lookup tool is on. */
+    val lookupHint = """
+You have a tool, lookup_packaged_food, that searches the Open Food Facts database of packaged-food labels.
+Call it for BRANDED packaged products that are named or visible (e.g. Barebells bar, Fairlife milk, Orgain
+powder, Tostitos queso, Brookside chocolate) — one call per product, several calls at once is fine. Only use a
+result whose brand and product actually match; convert per-100 g values to the amount the user had. If nothing
+matches, use your own knowledge. Don't look up generic or home-made food (salmon, rice, curry, paneer bhurji) —
+estimate those from the photo/description. Restaurant items: use your own knowledge of the chain's published
+nutrition. When finished, reply with ONLY the JSON object described above.
 """.trimIndent()
 
     fun user(text: String?, imageCount: Int, known: List<SavedFood>): String = buildString {
@@ -128,6 +165,8 @@ If the image or text is not food, return "items": [] and explain in "notes".
             items = items,
             confidence = obj.str("confidence"),
             notes = notes,
+            mentioned = (obj["foods_mentioned"] as? JsonArray).orEmpty()
+                .mapNotNull { it.jsonPrimitive.contentOrNull?.trim()?.takeIf(String::isNotEmpty) },
         )
     }
 }

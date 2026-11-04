@@ -99,6 +99,19 @@ fun SettingsScreen(vm: AppViewModel, modifier: Modifier) {
                 modifier = Modifier.fillMaxWidth(),
             )
             Text(provider.keyHint, style = MaterialTheme.typography.bodySmall)
+            if (provider == AiProvider.GEMINI) {
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Look up packaged brands", fontWeight = FontWeight.SemiBold)
+                        Text("When you mention a branded product (Barebells, Fairlife, Orgain…), Gemini checks its label in " +
+                            "Open Food Facts — a free food database — instead of guessing. Generic food like salmon or rice is " +
+                            "still estimated from your photo. Free: no extra cost.",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                    Switch(ai.webSearch, vm::setWebSearch)
+                }
+            }
             Spacer(Modifier.height(6.dp))
             OutlinedTextField(
                 value = modelText,

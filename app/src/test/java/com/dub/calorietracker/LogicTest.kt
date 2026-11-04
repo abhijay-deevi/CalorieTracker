@@ -80,4 +80,23 @@ class LogicTest {
         org.junit.Assert.assertTrue(three.contains("do not count any food twice"))
         org.junit.Assert.assertTrue(three.contains("estimate from the photo"))
     }
+
+    @Test fun openFoodFactsParsing() {
+        val off = com.dub.calorietracker.ai.OpenFoodFacts
+        // Real shape (Nutella): only per-100 g values.
+        val nutella = off.parse("3017620422003", """{"status":1,"product":{"product_name":"Nutella","brands":"Nutella, Ferrero",
+            "nutriments":{"energy-kcal_100g":539,"proteins_100g":6.3,"carbohydrates_100g":57.5,"fat_100g":30.9}}}""")!!
+        assertEquals("Nutella", nutella.name)
+        org.junit.Assert.assertFalse(nutella.perServing)
+        assertEquals(539.0, nutella.calories, 0.01)
+        // Per-serving values win when present.
+        val bar = off.parse("1", """{"status":1,"product":{"product_name":"Protein Bar","brands":"Acme","serving_size":"1 bar (40 g)",
+            "nutriments":{"energy-kcal_serving":190,"proteins_serving":20,"carbohydrates_serving":22,"fat_serving":7,"energy-kcal_100g":475}}}""")!!
+        assertEquals("Acme Protein Bar", bar.name)
+        assertEquals("1 bar (40 g)", bar.servingSize)
+        assertEquals(190.0, bar.calories, 0.01)
+        assertEquals(20.0, bar.protein, 0.01)
+        // Unknown barcode.
+        assertNull(off.parse("0", """{"status":0,"status_verbose":"product not found"}"""))
+    }
 }

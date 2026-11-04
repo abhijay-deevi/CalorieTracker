@@ -51,6 +51,7 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import com.dub.calorietracker.R
+import com.dub.calorietracker.data.EntrySource
 
 enum class Tab(val label: String, val icon: ImageVector) {
     TODAY("Today", Icons.Filled.Restaurant),
@@ -195,7 +196,10 @@ fun App(vm: AppViewModel) {
     }
 
     pending?.let { p ->
-        ReviewDialog(p, onCancel = vm::cancelPending, onConfirm = { edited, servings, remember ->
+        val busy by vm.busy.collectAsStateWithLifecycle()
+        ReviewDialog(p, busy = busy,
+            onRefine = if (p.source == EntrySource.PHOTO || p.source == EntrySource.TEXT) { fix -> vm.refine(p, fix) } else null,
+            onCancel = vm::cancelPending, onConfirm = { edited, servings, remember ->
             vm.confirmPending(edited, servings, remember)
             // After logging from the camera screen, show today's bars.
             if (showCapture) closeCapture()

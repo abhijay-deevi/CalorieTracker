@@ -13,6 +13,17 @@ Snap a photo or type what you ate → an AI estimates calories, protein, carbs a
 - **Today tab** – calorie arc (eaten / remaining / target) with carbs, protein and fat bars; add food by
   photo, gallery, text, or manual entry; review and edit every estimate before it's logged.
 - **Look** – clean light/dark theme with the Chakra Petch font (SIL Open Font License, bundled in `res/font`).
+- **Barcode scanning** – the barcode icon (camera screen, bottom right; Today → Add food) opens Google's
+  scanner and looks the product up in [Open Food Facts](https://world.openfoodfacts.org) (free, no key, no AI),
+  so packaged foods get their exact label values; type how many servings you ate. Scanned products are
+  remembered, and it works even while the AI is rate-limited.
+- **Brand lookups (Gemini)** – on by default: when you mention a branded packaged food (Barebells, Fairlife,
+  Orgain…), Gemini calls a lookup tool that searches Open Food Facts and uses the label values (free — Google's
+  own Search tool isn't offered on the free tier for current models). Generic food is estimated from the photo.
+- **Overload fallback** – if Gemini Flash answers "high demand" (503), the request is retried on an older Flash
+  and then Flash-Lite, and the review notes which model was used.
+- **Chat-style corrections** – the review shows every item like a food-log table; type a fix ("I meant 2
+  sandwiches", "the slices were thick") and the AI redoes the estimate with that in mind.
 - **Food memory** – everything you log is remembered. Typing "i ate peanut butter jelly" again logs it
   instantly with no AI call, and saved foods are suggested while you type.
 - **Zigzag high-day shifting** – if you go over a regular day's target and a high day is still coming this

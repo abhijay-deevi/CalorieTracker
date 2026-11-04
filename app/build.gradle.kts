@@ -68,6 +68,8 @@ dependencies {
     implementation("androidx.camera:camera-camera2:$camerax")
     implementation("androidx.camera:camera-lifecycle:$camerax")
     implementation("androidx.camera:camera-view:$camerax")
+    // Google code scanner: ready-made barcode scanning UI via Play services (tiny, no camera permission needed).
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 
     // Official Anthropic SDK (used when Claude is the selected AI provider)
     implementation("com.anthropic:anthropic-java:3.2.0")
