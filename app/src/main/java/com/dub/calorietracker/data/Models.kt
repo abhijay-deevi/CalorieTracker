@@ -69,7 +69,7 @@ data class FoodItem(
 )
 
 @Serializable
-enum class EntrySource { PHOTO, TEXT, SAVED, MANUAL, BARCODE }
+enum class EntrySource { PHOTO, TEXT, SAVED, MANUAL, BARCODE, PASTE }
 
 @Serializable
 data class FoodEntry(

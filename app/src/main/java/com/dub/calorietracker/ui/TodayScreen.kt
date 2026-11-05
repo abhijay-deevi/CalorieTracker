@@ -71,6 +71,11 @@ import com.dub.calorietracker.calc.WeekPlanner
 import com.dub.calorietracker.data.EntrySource
 import com.dub.calorietracker.data.FoodEntry
 import com.dub.calorietracker.data.FoodMemory
+import com.dub.calorietracker.data.PasteParser
+import android.widget.Toast
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import com.dub.calorietracker.R
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.ui.platform.LocalContext
@@ -81,26 +86,15 @@ import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun TodayScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit, onOpenCamera: () -> Unit) {
+fun TodayScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
     val date by vm.selectedDate.collectAsStateWithLifecycle()
     val today = LocalDate.now()
-    val busy by vm.busy.collectAsStateWithLifecycle()
-    val busyMessage by vm.busyMessage.collectAsStateWithLifecycle()
+    val clipboard = LocalClipboardManager.current
     val ctx = LocalContext.current
     var text by rememberSaveable { mutableStateOf("") }
     var editing by remember { mutableStateOf<FoodEntry?>(null) }
-    // Up to 3 photos of the same meal (different angles), sent together.
-    val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(AppViewModel.MAX_PHOTOS)) { uris ->
-        if (uris.isNotEmpty()) { vm.estimateFromPhotos(uris, text); text = "" }
-    }
-
-    // Ticks so the cooldown countdown stays current.
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(state.ai.cooldownUntil) {
-        while (true) { now = System.currentTimeMillis(); delay(30_000) }
-    }
-    val coolingDown = state.ai.cooldownUntil > now
+    val parsed = PasteParser.parse(text)
 
     val plan = state.plan
     val targets = WeekPlanner.weekTargets(state, date)
@@ -184,74 +178,64 @@ fun TodayScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit, o
             }
         }
 
-        // ----- add food -----
+        // ----- add food: paste ChatGPT's numbers -----
         item {
             SectionCard {
                 Text("Add food", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("Paste the LOG line from ChatGPT, or tap the camera below for photos, typing and barcodes.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(12.dp))
-                if (coolingDown) {
-                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
-                        .background(MaterialTheme.colorScheme.errorContainer).padding(12.dp)) {
-                        Text("AI limit reached", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onErrorContainer)
-                        Text("${state.ai.cooldownMessage} Photos & AI estimates are available again in " +
-                            "${AppViewModel.formatWait(state.ai.cooldownUntil - now)}. Saved foods and manual entry still work.",
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
-                    }
-                    Spacer(Modifier.height(12.dp))
-                }
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
-                    placeholder = { Text("What did you eat? e.g. peanut butter jelly") },
-                    trailingIcon = {
-                        IconButton(enabled = text.isNotBlank() && !busy, onClick = { vm.estimateFromText(text); text = "" }) {
-                            Icon(Icons.AutoMirrored.Filled.Send, "Estimate")
-                        }
-                    },
+                    placeholder = { Text("LOG: name | 450 cal | 40 carbs | 30 protein | 15 fat") },
+                    trailingIcon = if (text.isNotEmpty()) { { IconButton(onClick = { text = "" }) { Icon(Icons.Filled.Close, "Clear") } } } else null,
                     minLines = 1, maxLines = 4,
                 )
-                val suggestions = FoodMemory.suggestions(text, state.savedFoods)
-                if (suggestions.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                // Live preview of what was understood.
+                if (text.isNotBlank()) {
+                    Text(
+                        parsed?.let { "${if (it.parts.size > 1) "${it.parts.size} foods: " else ""}${it.name} · ${num(it.calories)} cal · C ${num(it.carbs)}g · P ${num(it.protein)}g · F ${num(it.fat)}g" }
+                            ?: "Couldn't find calories, carbs, protein and fat in that.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (parsed != null) MaterialTheme.colorScheme.primary else OverColor,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                    // Typed a food name instead? Offer saved foods.
+                    val suggestions = if (parsed == null) FoodMemory.suggestions(text, state.savedFoods) else emptyList()
+                    if (suggestions.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         suggestions.forEach { f ->
                             SuggestionChip(onClick = { vm.useSaved(f, text); text = "" },
                                 label = { Text("${f.name} · ${num(f.calories)} cal") })
                         }
                     }
                 }
-                Text("Tip: type a note before picking from the gallery to help the AI (e.g. \"large bowl, extra cheese\").",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 8.dp))
                 Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(enabled = !busy && !coolingDown, onClick = onOpenCamera, modifier = Modifier.weight(1f).height(48.dp)) {
-                        Icon(Icons.Filled.CameraAlt, null); Spacer(Modifier.width(8.dp)); Text("Photo")
-                    }
-                    FilledTonalButton(enabled = !busy && !coolingDown, modifier = Modifier.weight(1f).height(48.dp), onClick = {
-                        pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    // One tap: paste from clipboard and open the review if it reads.
+                    FilledTonalButton(modifier = Modifier.weight(1f).height(48.dp), onClick = {
+                        val clip = clipboard.getText()?.text.orEmpty()
+                        if (clip.isBlank()) vm.error.value = "The clipboard is empty — copy the LOG line in ChatGPT first."
+                        else {
+                            text = clip.trim()
+                            PasteParser.parse(clip)?.let { vm.startFromPaste(it); text = "" }
+                        }
                     }) {
-                        Icon(Icons.Filled.PhotoLibrary, null); Spacer(Modifier.width(8.dp)); Text("Gallery")
+                        Icon(Icons.Filled.ContentPaste, null); Spacer(Modifier.width(8.dp)); Text("Paste")
                     }
-                    // Barcode: exact label values from Open Food Facts — no AI, works even during AI cooldowns.
-                    FilledTonalIconButton(
-                        enabled = !busy,
-                        onClick = { scanFoodBarcode(ctx, onCode = vm::lookupBarcode, onError = { vm.error.value = it }) },
-                        modifier = Modifier.size(48.dp),
-                    ) { Icon(painterResource(R.drawable.ic_barcode), "Scan a barcode") }
+                    Button(enabled = parsed != null, modifier = Modifier.weight(1f).height(48.dp), onClick = {
+                        parsed?.let { vm.startFromPaste(it); text = "" }
+                    }) { Text("Add") }
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    TextButton(onClick = {
+                        clipboard.setText(AnnotatedString(PasteParser.CHATGPT_INSTRUCTIONS))
+                        Toast.makeText(ctx, "Copied — paste it into ChatGPT once (or its Custom Instructions)", Toast.LENGTH_LONG).show()
+                    }) { Text("Copy ChatGPT instructions") }
                     TextButton(onClick = { vm.startManual() }) {
-                        Text("Enter calories manually", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-                if (busy) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(8.dp))
-                        Text(busyMessage.ifBlank { "Estimating…" }, style = MaterialTheme.typography.bodyMedium)
+                        Text("Manual", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -358,7 +342,10 @@ fun ReviewDialog(
     AlertDialog(
         onDismissRequest = onCancel,
         containerColor = MaterialTheme.colorScheme.surface,
-        title = { Text(if (p.source == EntrySource.MANUAL) "Add food" else "Review estimate") },
+        title = {
+            Text(when (p.source) { EntrySource.MANUAL -> "Add food"; EntrySource.PASTE -> "From ChatGPT"; else -> "Review estimate" } +
+                if (p.of > 1) " · ${p.step} of ${p.of}" else "")
+        },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 // ----- item breakdown, like a food-log table -----
@@ -424,7 +411,7 @@ fun ReviewDialog(
                 if (p.savedFoodId == null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(rememberIt, { rememberIt = it })
-                        Text("Remember \"${name.ifBlank { "this" }}\" so I can log it again without the AI",
+                        Text("Remember \"${name.ifBlank { "this" }}\" so I can log it again instantly",
                             style = MaterialTheme.typography.bodySmall)
                     }
                 }
@@ -436,7 +423,7 @@ fun ReviewDialog(
                     carbs = carb.toDoubleOrNull() ?: 0.0, fat = fat.toDoubleOrNull() ?: 0.0), servings, rememberIt)
             }) { Text("Log it") }
         },
-        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = onCancel) { Text(if (p.of > 1 && p.step < p.of) "Skip" else "Cancel") } },
     )
 }
 

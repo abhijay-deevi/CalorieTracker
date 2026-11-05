@@ -99,4 +99,34 @@ class LogicTest {
         // Unknown barcode.
         assertNull(off.parse("0", """{"status":0,"status_verbose":"product not found"}"""))
     }
+
+    @Test fun pasteParser() {
+        val pp = com.dub.calorietracker.data.PasteParser
+        // The requested format, inside a longer ChatGPT reply.
+        val a = pp.parse("Here's your breakdown...\nTotal 1,660\nLOG: banana bread & paneer sandwiches | 1,660 cal | 200 carbs | 54 protein | 75 fat")!!
+        assertEquals("banana bread & paneer sandwiches", a.name)
+        assertEquals(1660.0, a.calories, 0.0); assertEquals(200.0, a.carbs, 0.0)
+        assertEquals(54.0, a.protein, 0.0); assertEquals(75.0, a.fat, 0.0)
+        // Same food twice: the later (corrected) line wins.
+        val b = pp.parse("LOG: x | 100 cal | 1 carbs | 2 protein | 3 fat\nLOG: x | 200 cal | 4 carbs | 5 protein | 6 fat")!!
+        assertEquals(200.0, b.calories, 0.0)
+        // Several foods → one review with each as an item, totals summed, a "Total" line ignored.
+        val m = pp.parse("Nice!\nLOG: Barebells bar | 200 cal | 18 carbs | 20 protein | 8 fat\n" +
+            "LOG: Banana | 105 cal | 27 carbs | 1 protein | 0 fat\nLOG: Total | 305 cal | 45 carbs | 21 protein | 8 fat")!!
+        assertEquals(2, m.parts.size)
+        assertEquals("Barebells bar + Banana", m.name)
+        assertEquals(305.0, m.calories, 0.0); assertEquals(45.0, m.carbs, 0.0)
+        assertEquals(21.0, m.protein, 0.0); assertEquals(8.0, m.fat, 0.0)
+        // Labelled, any order, colon style.
+        val c = pp.parse("Calories: 1160\nProtein: 32g Carbs: 157g Fat: 48g")!!
+        assertEquals(1160.0, c.calories, 0.0); assertEquals(157.0, c.carbs, 0.0)
+        assertEquals(32.0, c.protein, 0.0); assertEquals(48.0, c.fat, 0.0)
+        // Short labels.
+        val d = pp.parse("450 kcal, P 30, C 40, F 15")!!
+        assertEquals(30.0, d.protein, 0.0); assertEquals(40.0, d.carbs, 0.0); assertEquals(15.0, d.fat, 0.0)
+        // Four bare numbers: calories, carbs, protein, fat.
+        val e = pp.parse("540 84 9 21")!!
+        assertEquals(84.0, e.carbs, 0.0); assertEquals(9.0, e.protein, 0.0)
+        assertNull(pp.parse("banana bread"))
+    }
 }

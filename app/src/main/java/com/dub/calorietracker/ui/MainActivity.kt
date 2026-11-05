@@ -52,6 +52,14 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import com.dub.calorietracker.R
 import com.dub.calorietracker.data.EntrySource
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 
 enum class Tab(val label: String, val icon: ImageVector) {
     TODAY("Today", Icons.Filled.Restaurant),
@@ -131,8 +139,8 @@ fun App(vm: AppViewModel) {
     val pending by vm.pending.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableStateOf(if (state.plan == null) Tab.PLAN else Tab.TODAY) }
-    // Open straight to the camera once a plan exists.
-    var showCapture by rememberSaveable { mutableStateOf(state.plan != null) }
+    // The camera screen opens from the camera button in the middle of the bottom bar.
+    var showCapture by rememberSaveable { mutableStateOf(false) }
     // Bumped to reset the capture screen (clear photo + note) after a meal is logged.
     var captureSession by rememberSaveable { mutableIntStateOf(0) }
 
@@ -150,7 +158,7 @@ fun App(vm: AppViewModel) {
                 vm,
                 Modifier.systemBarsPadding().imePadding(),
                 firstRun = true,
-                onDone = { openCapture() },
+                onDone = { tab = Tab.TODAY },
             )
         }
     } else if (showCapture) {
@@ -159,27 +167,43 @@ fun App(vm: AppViewModel) {
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
-                Tab.entries.forEach { t ->
-                    NavigationBarItem(
-                        selected = tab == t,
-                        onClick = { tab = t },
-                        icon = { Icon(t.icon, contentDescription = t.label) },
-                        label = { Text(t.label) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = MaterialTheme.colorScheme.primary,
-                            selectedTextColor = MaterialTheme.colorScheme.primary,
-                            indicatorColor = Color.Transparent,
-                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        ),
-                    )
-                }
+                val itemColors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                    indicatorColor = Color.Transparent,
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                @Composable
+                fun RowScope.TabItem(t: Tab) = NavigationBarItem(
+                    selected = tab == t,
+                    onClick = { tab = t },
+                    icon = { Icon(t.icon, contentDescription = t.label) },
+                    label = { Text(t.label) },
+                    colors = itemColors,
+                )
+                TabItem(Tab.TODAY)
+                TabItem(Tab.WEEK)
+                // Center camera button: camera, gallery, typing and barcode.
+                NavigationBarItem(
+                    selected = false,
+                    onClick = ::openCapture,
+                    icon = {
+                        Box(Modifier.size(52.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary),
+                            contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.CameraAlt, "Add food with camera", tint = MaterialTheme.colorScheme.onPrimary)
+                        }
+                    },
+                    colors = itemColors,
+                )
+                TabItem(Tab.PLAN)
+                TabItem(Tab.SETTINGS)
             }
         }
     ) { padding ->
         val mod = Modifier.padding(padding).consumeWindowInsets(padding).imePadding()
         when (tab) {
-            Tab.TODAY -> TodayScreen(vm, mod, onSetUpPlan = { tab = Tab.PLAN }, onOpenCamera = ::openCapture)
+            Tab.TODAY -> TodayScreen(vm, mod, onSetUpPlan = { tab = Tab.PLAN })
             Tab.WEEK -> WeekScreen(vm, mod, onSetUpPlan = { tab = Tab.PLAN })
             Tab.PLAN -> PlanScreen(vm, mod, onDone = { tab = Tab.TODAY })
             Tab.SETTINGS -> SettingsScreen(vm, mod)

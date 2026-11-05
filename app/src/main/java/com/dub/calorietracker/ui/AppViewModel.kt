@@ -17,6 +17,7 @@ import com.dub.calorietracker.data.FoodEntry
 import com.dub.calorietracker.data.FoodItem
 import com.dub.calorietracker.data.FoodMemory
 import com.dub.calorietracker.data.MacroSplit
+import com.dub.calorietracker.data.PasteParser
 import com.dub.calorietracker.data.Plan
 import com.dub.calorietracker.data.Repository
 import com.dub.calorietracker.data.SavedFood
@@ -45,6 +46,9 @@ data class Pending(
     val savedFoodId: String? = null,
     /** What "1 serving" means, e.g. "1 bar (40 g)" — shown next to the servings box. */
     val servingLabel: String? = null,
+    /** "Food [step] of [of]" when several pasted foods are reviewed one after another (0 = single food). */
+    val step: Int = 0,
+    val of: Int = 0,
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -96,6 +100,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             items = food.items, notes = "From your saved foods — no AI needed.", source = EntrySource.SAVED,
             sourceText = sourceText, savedFoodId = food.id,
         )
+    }
+
+    /** Foods still to review after the current one (several LOG lines pasted at once). */
+    private val queued = ArrayDeque<Pending>()
+
+    /**
+     * Numbers pasted from ChatGPT → review dialog with them filled in.
+     * Several LOG lines become separate foods, reviewed and logged one after another.
+     */
+    fun startFromPaste(p: PasteParser.Parsed) {
+        val foods = p.parts.ifEmpty { listOf(p) }
+        val list = foods.mapIndexed { i, f ->
+            Pending(
+                name = f.name, calories = f.calories, protein = f.protein, carbs = f.carbs, fat = f.fat,
+                notes = "Pasted from ChatGPT.", source = EntrySource.PASTE,
+                step = if (foods.size > 1) i + 1 else 0, of = if (foods.size > 1) foods.size else 0,
+            )
+        }
+        queued.clear(); queued.addAll(list.drop(1))
+        pending.value = list.first()
     }
 
     fun startManual() {
@@ -212,7 +236,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun cancelPending() { pending.value = null }
+    /** Cancel (or "Skip" while pasted foods are queued — moves on to the next one). */
+    fun cancelPending() { pending.value = queued.removeFirstOrNull() }
     fun clearError() { error.value = null }
 
     /** Logs the reviewed food for the selected date and remembers it for next time. */
@@ -240,7 +265,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val added = s.copy(entries = s.entries + entry, savedFoods = foods)
             WeekPlanner.autoShift(added, date, LocalDate.now())
         }
-        pending.value = null
+        pending.value = queued.removeFirstOrNull() // next pasted food, if any
         clearCapturedPhotos()
     }
 

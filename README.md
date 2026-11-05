@@ -3,8 +3,14 @@
 Snap a photo or type what you ate → an AI estimates calories, protein, carbs and fat → progress bars show what's left for the day and the week.
 
 ## Features
-- **Camera-first** – the app opens on a live camera block with a note box underneath and a send button.
-  Tap the shutter (or the gallery icon), add details, send. The X (top left) goes to today's totals.
+- **Paste from ChatGPT** – Today → Add food: tap **Copy ChatGPT instructions** once and give them to ChatGPT;
+  it then ends each food reply with `LOG: name | 1660 cal | 200 carbs | 54 protein | 75 fat`. Copy that line,
+  tap **Paste**, and the review opens with the numbers filled in. Labelled numbers in other formats work too.
+  Several LOG lines (one per food) become separate foods, reviewed one after another ("1 of 2", **Skip** to drop
+  one) and logged as separate entries; a repeated food name counts as a correction (the later line wins) and a
+  "Total" line is ignored.
+- **Camera button** (middle of the bottom bar) – a live camera block with a note box underneath and a send button.
+  Tap the shutter (or the gallery icon), add details, send. The X (top left) goes back.
   Take up to 3 photos of the same meal from different angles — they're sent together in one AI request
   (one request against the free-tier limit), and the AI is told they show a single meal so nothing is counted twice.
   Photos taken in the app are kept only in its private cache (never your gallery) and deleted once the meal is logged.
