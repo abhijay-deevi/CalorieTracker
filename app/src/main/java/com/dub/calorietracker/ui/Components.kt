@@ -38,24 +38,23 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 // ---------- palette ----------
+// The default (Blue) theme's colors; other accents are generated in Theme.kt.
 val Teal = Color(0xFF72D3BF)        // calories
 val SkyBlue = Color(0xFF52B4F2)     // macros
 val AccentBlue = Color(0xFF1B8BDB)  // buttons
 val Amber = Color(0xFFF2B33D)       // zigzag high days
 val OverColor = Color(0xFFEF5B5B)
 
-// Kept so existing screens read naturally; macros share one calm color like the reference design.
-val CaloriesColor = Teal
-val ProteinColor = SkyBlue
-val CarbsColor = SkyBlue
-val FatColor = SkyBlue
 
 fun num(v: Double): String = NumberFormat.getIntegerInstance().format(v.roundToInt())
 fun num(v: Int): String = NumberFormat.getIntegerInstance().format(v)
 
 /** Big left-aligned page title with optional subtitle and prev/next chevrons. */
 @Composable
-fun ScreenHeader(title: String, subtitle: String? = null, onPrev: (() -> Unit)? = null, onNext: (() -> Unit)? = null) {
+fun ScreenHeader(
+    title: String, subtitle: String? = null, onPrev: (() -> Unit)? = null, onNext: (() -> Unit)? = null,
+    actions: @Composable () -> Unit = {},
+) {
     Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = 24.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
@@ -69,6 +68,7 @@ fun ScreenHeader(title: String, subtitle: String? = null, onPrev: (() -> Unit)? 
         if (onNext != null) IconButton(onClick = onNext) {
             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next", tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        actions()
     }
 }
 
@@ -125,7 +125,7 @@ fun MacroColumn(label: String, eaten: Double, target: Double, modifier: Modifier
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(8.dp))
-        ProgressBar(if (target > 0) (eaten / target).toFloat() else 0f, SkyBlue, 8.dp)
+        ProgressBar(if (target > 0) (eaten / target).toFloat() else 0f, LocalAppColors.current.macros, 8.dp)
         Spacer(Modifier.height(8.dp))
         Text("${num(eaten)} / ${num(target)} g", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
     }
@@ -138,7 +138,7 @@ fun CalorieGauge(eaten: Double, target: Double, size: Dp = 168.dp, stroke: Dp = 
     val fraction = if (target > 0) (eaten / target).toFloat() else 0f
     val animated by animateFloatAsState(fraction.coerceIn(0f, 1f), label = "gauge")
     val track = MaterialTheme.colorScheme.surfaceVariant
-    val color = if (fraction > 1f) OverColor else Teal
+    val color = if (fraction > 1f) OverColor else LocalAppColors.current.calories
     // The arc is open at the bottom, so the box is cut to ~80% height to avoid dead space below it.
     Box(Modifier.width(size).height(size * 0.8f)) {
         Canvas(Modifier.matchParentSize()) {

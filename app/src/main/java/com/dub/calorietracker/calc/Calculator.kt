@@ -1,6 +1,7 @@
 package com.dub.calorietracker.calc
 
 import com.dub.calorietracker.data.Goal
+import com.dub.calorietracker.data.MacroStyle
 import com.dub.calorietracker.data.Profile
 import com.dub.calorietracker.data.ScheduleType
 import com.dub.calorietracker.data.Sex
@@ -20,7 +21,42 @@ object Calculator {
 
     fun maintenance(p: Profile): Int = (bmr(p) * p.activity.multiplier).roundToInt()
 
-    fun goalTarget(maintenance: Int, goal: Goal): Int = maintenance - goal.deficit
+    /** Recomp: about 5% under maintenance — a small deficit to lose fat slowly while still fuelling muscle growth. */
+    fun goalTarget(maintenance: Int, goal: Goal): Int =
+        if (goal == Goal.RECOMP) (maintenance * 0.95).roundToInt() else maintenance - goal.deficit
+
+    // ---------- Macros ----------
+
+    /**
+     * Weight used for protein. Protein needs follow muscle, not fat, so for higher body weights it's capped at
+     * the weight for a BMI of 27 — otherwise heavier people get protein targets that are much higher than needed.
+     */
+    fun proteinWeightKg(p: Profile): Double {
+        val m = p.heightCm / 100
+        return min(p.weightKg, 27 * m * m)
+    }
+
+    /** Grams of protein per day for this goal — the same on every day of the week. */
+    fun proteinGrams(p: Profile, goal: Goal): Int = (proteinWeightKg(p) * goal.proteinPerKg).roundToInt()
+
+    /** Grams of fat per day: [MacroStyle.fatPct] of the average calories, never under 0.6 g/kg (hormone health). */
+    fun fatGrams(avgCalories: Int, style: MacroStyle, p: Profile?): Int {
+        val fromPct = (avgCalories * style.fatPct / 9).roundToInt()
+        val minimum = p?.let { (0.6 * proteinWeightKg(it)).roundToInt() } ?: 0
+        return max(fromPct, minimum)
+    }
+
+    /** Carbs fill whatever calories are left after protein (4 cal/g) and fat (9 cal/g). */
+    fun carbGrams(calories: Int, proteinG: Int, fatG: Int): Int = max(0, ((calories - proteinG * 4 - fatG * 9) / 4.0).roundToInt())
+
+    fun pct(grams: Int, calPerGram: Int, calories: Int): Int =
+        if (calories <= 0) 0 else (grams * calPerGram * 100.0 / calories).roundToInt()
+
+    /**
+     * For a custom plan with no maintenance number: zigzag high days get ~20% more than the average
+     * (and low days a little less), so the week still averages the typed-in goal.
+     */
+    fun customHighDay(avgCalories: Int): Int = (avgCalories * 1.2).roundToInt()
 
     fun percentOf(maintenance: Int, target: Int): Int =
         if (maintenance == 0) 0 else (target * 100.0 / maintenance).roundToInt()

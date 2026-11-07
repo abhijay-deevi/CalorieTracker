@@ -12,6 +12,9 @@ import com.dub.calorietracker.ai.OpenFoodFacts
 import com.dub.calorietracker.calc.WeekPlanner
 import com.dub.calorietracker.data.AiProvider
 import com.dub.calorietracker.data.AppState
+import com.dub.calorietracker.data.Backup
+import com.dub.calorietracker.data.DayLog
+import kotlinx.coroutines.flow.collectLatest
 import com.dub.calorietracker.data.EntrySource
 import com.dub.calorietracker.data.FoodEntry
 import com.dub.calorietracker.data.FoodItem
@@ -64,7 +67,108 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun newId() = UUID.randomUUID().toString()
 
-    init { clearCapturedPhotos() } // leftovers from a previous session
+    // ---------- Backup file (survives deleting the app) ----------
+
+    private val prefs = app.getSharedPreferences("backup", android.content.Context.MODE_PRIVATE)
+    /** The file the app keeps saving everything to (made automatically in Documents, or chosen by the user). */
+    val backupUri = MutableStateFlow(prefs.getString("uri", null))
+    val lastBackupAt = MutableStateFlow(prefs.getLong("at", 0L))
+    val backupProblem = MutableStateFlow<String?>(null)
+    /** A backup that was opened and is waiting for "Replace" to be confirmed. */
+    val restoreCandidate = MutableStateFlow<AppState?>(null)
+
+    private val resolver get() = getApplication<Application>().contentResolver
+
+    init {
+        clearCapturedPhotos() // leftovers from a previous session
+        // Keep the backup file up to date: a couple of seconds after any change, rewrite it.
+        // On first launch with a plan (and no file yet) this also creates the automatic backup file.
+        viewModelScope.launch {
+            var first = true
+            state.collectLatest { s ->
+                if (first) { first = false; if (backupUri.value != null) return@collectLatest }
+                kotlinx.coroutines.delay(2000)
+                writeBackup(s)
+            }
+        }
+    }
+
+    /**
+     * Documents/CalorieTracker/calorie-tracker-backup.json, created without asking (Android 10+).
+     * Files in Documents stay when the app is deleted. Only made once there's a plan, so a fresh reinstall
+     * doesn't create an empty backup before you've had a chance to restore the old one.
+     */
+    private fun createAutoBackupFile(): Uri? {
+        if (android.os.Build.VERSION.SDK_INT < 29) return null
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "calorie-tracker-backup.json")
+            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/json")
+            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOCUMENTS + "/CalorieTracker")
+        }
+        return try {
+            resolver.insert(android.provider.MediaStore.Files.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY), values)
+        } catch (e: Exception) { null }
+    }
+
+    private suspend fun writeBackup(s: AppState): Boolean = withContext(Dispatchers.IO) {
+        if (backupUri.value == null && s.plan != null) {
+            createAutoBackupFile()?.let { u ->
+                prefs.edit().putString("uri", u.toString()).putBoolean("auto", true).apply()
+                backupUri.value = u.toString()
+            }
+        }
+        val uri = backupUri.value?.let(Uri::parse) ?: return@withContext false
+        try {
+            resolver.openOutputStream(uri, "wt")!!.use { it.write(Backup.toJson(s).toByteArray()) }
+            val now = System.currentTimeMillis()
+            prefs.edit().putLong("at", now).apply()
+            lastBackupAt.value = now; backupProblem.value = null
+            true
+        } catch (e: Exception) {
+            backupProblem.value = "Couldn't write the backup file (was it moved or deleted?). Choose it again."
+            false
+        }
+    }
+
+    private fun keepAccess(uri: Uri) {
+        val rw = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        try { resolver.takePersistableUriPermission(uri, rw) } catch (_: Exception) {}
+        prefs.edit().putString("uri", uri.toString()).apply()
+        backupUri.value = uri.toString()
+    }
+
+    /** A new backup file was created → save everything into it now and after every change. */
+    fun setBackupFile(uri: Uri) {
+        keepAccess(uri)
+        viewModelScope.launch { writeBackup(state.value) }
+    }
+
+    /** Backup now (button). */
+    fun backupNow() { viewModelScope.launch { writeBackup(state.value) } }
+
+    /** An existing backup file was picked → read it and ask before replacing what's in the app. */
+    fun openBackup(uri: Uri) {
+        viewModelScope.launch {
+            val restored = withContext(Dispatchers.IO) {
+                try { resolver.openInputStream(uri)?.use { it.readBytes().decodeToString() }?.let(Backup::fromJson) }
+                catch (e: Exception) { null }
+            }
+            if (restored == null) { error.value = "That file isn't a Calorie Tracker backup."; return@launch }
+            pendingRestoreUri = uri
+            restoreCandidate.value = restored
+        }
+    }
+    private var pendingRestoreUri: Uri? = null
+
+    fun confirmRestore() {
+        val backup = restoreCandidate.value ?: return
+        repo.update { Backup.restore(it, backup) }
+        // Keep saving to the same file from now on.
+        pendingRestoreUri?.let(::keepAccess)
+        restoreCandidate.value = null
+    }
+
+    fun cancelRestore() { restoreCandidate.value = null }
 
     /**
      * Camera photos live only in the app's private cache (never the gallery / MediaStore).
@@ -282,6 +386,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- Plan & week ----------
 
+    /** Change the check-in for [date]; an emptied check-in is removed. */
+    fun updateDayLog(date: LocalDate, change: (DayLog) -> DayLog) = repo.update { s ->
+        val k = date.toString()
+        val next = change(s.dayLogs[k] ?: DayLog())
+        s.copy(dayLogs = if (next.isEmpty()) s.dayLogs - k else s.dayLogs + (k to next))
+    }
+
     fun savePlan(plan: Plan) = repo.update { it.copy(plan = plan, weekOverrides = emptyMap(), shiftNotices = emptyMap()) }
 
     fun swapDays(date: LocalDate, a: Int, b: Int) = repo.update { WeekPlanner.swapDays(it, date, a, b) }
@@ -295,7 +406,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Manually make [date] a high-calorie day by swapping with the best later high day this week. */
     fun useHighDay(date: LocalDate) = repo.update { s ->
         val later = WeekPlanner.bestLaterHighDay(s, date) ?: return@update s
-        WeekPlanner.swapDays(s, date, WeekPlanner.dayIndex(date), later)
+        WeekPlanner.swapDays(s, date, WeekPlanner.dayIndex(date), WeekPlanner.dayIndex(later))
     }
 
     fun dismissNotice(date: LocalDate) = repo.update { it.copy(shiftNotices = it.shiftNotices - date.toString()) }
@@ -308,6 +419,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun clearCooldown() = repo.update { it.copy(ai = it.ai.copy(cooldownUntil = 0, cooldownMessage = "")) }
     fun setMacros(m: MacroSplit) = repo.update { it.copy(macros = m) }
     fun setAutoDetect(on: Boolean) = repo.update { it.copy(autoDetectHighDays = on) }
+    fun setThemeMode(m: com.dub.calorietracker.data.ThemeMode) = repo.update { it.copy(theme = it.theme.copy(mode = m)) }
+    fun setAccent(a: com.dub.calorietracker.data.Accent) = repo.update { it.copy(theme = it.theme.copy(accent = a)) }
     fun setWebSearch(on: Boolean) = repo.update { it.copy(ai = it.ai.copy(webSearch = on)) }
 
     companion object {

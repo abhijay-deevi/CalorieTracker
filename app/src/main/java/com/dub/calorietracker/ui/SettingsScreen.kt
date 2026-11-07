@@ -57,6 +57,8 @@ fun SettingsScreen(vm: AppViewModel, modifier: Modifier) {
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
         Text("Settings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(20.dp))
 
+        AppearanceCard(state.theme, vm::setThemeMode, vm::setAccent)
+
         // ----- AI provider -----
         SectionCard {
             Text("AI for food estimates", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -129,8 +131,15 @@ fun SettingsScreen(vm: AppViewModel, modifier: Modifier) {
             }
         }
 
+        BackupCard(vm)
+
         // ----- macros -----
-        SectionCard {
+        val plan = state.plan
+        if (plan != null && plan.proteinG > 0) SectionCard {
+            Text("Macro targets", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("Protein ${plan.proteinG} g and fat ${plan.fatG} g every day; carbs fill the rest of each day's calories. " +
+                "Change them on the Plan tab → Custom plan (or Recalculate).", style = MaterialTheme.typography.bodySmall)
+        } else SectionCard {
             Text("Macro targets", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text("Percent of each day's calories. Must add up to 100.", style = MaterialTheme.typography.bodySmall)
             var p by remember { mutableStateOf(state.macros.proteinPct.toString()) }

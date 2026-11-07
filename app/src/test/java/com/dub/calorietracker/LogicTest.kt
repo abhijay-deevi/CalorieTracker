@@ -4,6 +4,7 @@ import com.dub.calorietracker.calc.Calculator
 import com.dub.calorietracker.calc.WeekPlanner
 import com.dub.calorietracker.data.AppState
 import com.dub.calorietracker.data.ActivityLevel
+import com.dub.calorietracker.data.DayLog
 import com.dub.calorietracker.data.EntrySource
 import com.dub.calorietracker.data.FoodEntry
 import com.dub.calorietracker.data.FoodMemory
@@ -98,6 +99,94 @@ class LogicTest {
         assertEquals(20.0, bar.protein, 0.01)
         // Unknown barcode.
         assertNull(off.parse("0", """{"status":0,"status_verbose":"product not found"}"""))
+    }
+
+    @Test fun macroPlan() {
+        val me = Profile(30, Sex.MALE, 177.8, 81.65, ActivityLevel.MODERATE)
+        // Recomp: ~5% under maintenance, top-of-range protein.
+        assertEquals(2481, Calculator.goalTarget(2612, Goal.RECOMP))
+        assertEquals(180, Calculator.proteinGrams(me, Goal.RECOMP))      // 2.2 g/kg
+        assertEquals(163, Calculator.proteinGrams(me, Goal.LOSS))        // 2.0 g/kg
+        // Heavier body weight: protein uses the weight at BMI 27 (85.4 kg at this height), not 120 kg.
+        assertEquals(171, Calculator.proteinGrams(me.copy(weightKg = 120.0), Goal.LOSS))
+        // Fat 25% of 2112 cal = 59 g; never under 0.6 g/kg.
+        assertEquals(59, Calculator.fatGrams(2112, com.dub.calorietracker.data.MacroStyle.BALANCED, me))
+        assertEquals(49, Calculator.fatGrams(1200, com.dub.calorietracker.data.MacroStyle.HIGHER_CARB, me))
+        assertEquals(232, Calculator.carbGrams(2112, 163, 59))
+    }
+
+    @Test fun proteinStaysTheSameOnHighAndLowDays() {
+        val template = Calculator.weekTemplate(2612, 2112, Sex.MALE, ScheduleType.ZIGZAG_1) // 2612 high, 1912 low
+        val plan = Plan(null, 2612, Goal.LOSS, 2112, ScheduleType.ZIGZAG_1, template, proteinG = 163, fatG = 59)
+        val s = AppState(plan = plan)
+        val high = WeekPlanner.macroTargets(2612, s)
+        val low = WeekPlanner.macroTargets(1912, s)
+        assertEquals(163.0, high.protein, 0.0); assertEquals(163.0, low.protein, 0.0)
+        assertEquals(59.0, high.fat, 0.0); assertEquals(59.0, low.fat, 0.0)
+        assertEquals(175.0, high.carbs - low.carbs, 1.0) // the extra 700 cal are all carbs
+        // Custom plan zigzag: high days ~20% over the average, same weekly total.
+        val custom = Calculator.weekTemplate(Calculator.customHighDay(2000), 2000, Sex.FEMALE, ScheduleType.ZIGZAG_1)
+        assertEquals(2400, custom[0]); assertEquals(1840, custom[1])
+        assertEquals(14000, custom.sum())
+    }
+
+    @Test fun backupRoundTripWithoutKeys() {
+        val b = com.dub.calorietracker.data.Backup
+        val s = AppState(
+            entries = listOf(FoodEntry("e", "2026-11-04", 0, "pizza", 600.0, 25.0, 70.0, 22.0, source = EntrySource.PASTE)),
+            ai = com.dub.calorietracker.data.AiSettings(apiKeys = mapOf(com.dub.calorietracker.data.AiProvider.GEMINI to "secret")),
+        )
+        val text = b.toJson(s)
+        org.junit.Assert.assertFalse(text.contains("secret"))
+        val back = b.fromJson(text)!!
+        assertEquals(s.entries, back.entries)
+        // Restoring keeps the key already in the app.
+        assertEquals("secret", b.restore(s, back).ai.key(com.dub.calorietracker.data.AiProvider.GEMINI))
+        assertNull(b.fromJson("""{"hello":1}"""))
+        assertNull(b.fromJson("not json"))
+    }
+
+    @Test fun restoreMergesInsteadOfReplacing() {
+        val b = com.dub.calorietracker.data.Backup
+        fun e(id: String, date: String) = FoodEntry(id, date, 0, id, 100.0, 1.0, 1.0, 1.0)
+        val old = AppState(
+            entries = listOf(e("a", "2026-09-01"), e("b", "2026-09-02")),
+            dayLogs = mapOf("2026-09-01" to DayLog(weightKg = 82.0, gym = true)),
+        )
+        // After a reinstall: one new food and a new check-in before restoring.
+        val now = AppState(entries = listOf(e("c", "2026-11-07")), dayLogs = mapOf("2026-11-07" to DayLog(weightKg = 80.0)))
+        val merged = b.restore(now, b.fromJson(b.toJson(old))!!)
+        assertEquals(setOf("a", "b", "c"), merged.entries.map { it.id }.toSet())
+        assertEquals(setOf("2026-09-01", "2026-11-07"), merged.dayLogs.keys)
+        // Restoring the same file twice doesn't duplicate anything.
+        assertEquals(3, b.restore(merged, b.fromJson(b.toJson(old))!!).entries.size)
+    }
+
+    @Test fun chatExport() {
+        val plan = Plan(
+            Profile(30, Sex.MALE, 180.0, 80.0, ActivityLevel.MODERATE), 2600, Goal.LOSS, 2100,
+            ScheduleType.STANDARD, List(7) { 2100 }, proteinG = 160, fatG = 60,
+        )
+        fun food(id: String, date: String, cal: Double, p: Double) = FoodEntry(id, date, 0, id, cal, p, 0.0, 0.0)
+        val s = AppState(
+            plan = plan,
+            entries = listOf(food("a", "2026-10-26", 2000.0, 150.0), food("b", "2026-10-27", 2200.0, 170.0), food("c", "2026-11-02", 1900.0, 140.0)),
+            dayLogs = mapOf(
+                "2026-10-25" to DayLog(weightKg = Calculator.lbToKg(182.0), waistCm = 34.0 * 2.54),
+                "2026-10-26" to DayLog(weightKg = Calculator.lbToKg(181.0), gym = true, cardio = true),
+                "2026-10-28" to DayLog(gym = true),
+                "2026-11-02" to DayLog(weightKg = Calculator.lbToKg(180.4), cardio = true),
+            ),
+        )
+        val ce = com.dub.calorietracker.data.ChatExport
+        val t = ce.text(s, LocalDate.parse("2026-10-25"), LocalDate.parse("2026-11-07"), today = LocalDate.parse("2026-11-04"))
+        assert(t.contains("My plan: 2,100 cal/day on average, protein goal 160 g/day.")) { t }
+        fun block(vararg lines: String) = assert(t.contains(lines.joinToString("\n"))) { t }
+        block("Week of Oct 25 - Oct 31", "- Morning weight: Sun 182.0, Mon 181.0 (average 181.5)", "- Waist: 34.0 in",
+            "- Intake: averaged 2,100 cal/day and 160 g protein/day (2 of 7 days logged)", "- Gym sessions: 2", "- Cardio sessions: 1")
+        block("Week of Nov 1 - Nov 7 (in progress, through Wed)", "- Morning weight: Mon 180.4", "- Waist: not measured",
+            "- Intake: averaged 1,900 cal/day and 140 g protein/day (1 of 4 days logged)", "- Gym sessions: 0", "- Cardio sessions: 1")
+        assert(!t.contains("Nov 8")) { t } // weeks that haven't started are left out
     }
 
     @Test fun pasteParser() {

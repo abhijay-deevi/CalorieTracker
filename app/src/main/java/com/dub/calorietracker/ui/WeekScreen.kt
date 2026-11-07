@@ -42,11 +42,22 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dub.calorietracker.calc.Macros
 import com.dub.calorietracker.calc.WeekPlanner
+import com.dub.calorietracker.data.ChatExport
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.runtime.saveable.rememberSaveable
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 @Composable
-fun WeekScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit) {
+fun WeekScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit, onOpenDay: (LocalDate) -> Unit) {
+    var month by rememberSaveable { mutableStateOf(false) }
+    if (month) MonthScreen(vm, modifier, onToggle = { month = it }, onOpenDay = onOpenDay)
+    else WeekView(vm, modifier, onSetUpPlan, onToggle = { month = it })
+}
+
+@Composable
+private fun WeekView(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit, onToggle: (Boolean) -> Unit) {
+    val copy = rememberCopyForChat()
     val state by vm.state.collectAsStateWithLifecycle()
     val today = LocalDate.now()
     var anchor by remember { mutableStateOf(today) }
@@ -57,7 +68,7 @@ fun WeekScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit) {
     val eatenPerDay = dates.map { WeekPlanner.eaten(state.entries, it) }
     val weekEaten = eatenPerDay.fold(Macros.ZERO) { a, b -> a + b }
     val weekTarget = targets.sum()
-    val weekMacroGoal = targets.map { WeekPlanner.macroTargets(it, state.macros) }.fold(Macros.ZERO) { a, b -> a + b }
+    val weekMacroGoal = targets.map { WeekPlanner.macroTargets(it, state) }.fold(Macros.ZERO) { a, b -> a + b }
     val zigzag = WeekPlanner.isZigzag(state)
     val swapped = state.weekOverrides.containsKey(WeekPlanner.weekStart(anchor).toString())
     val fmt = DateTimeFormatter.ofPattern("MMM d")
@@ -71,6 +82,7 @@ fun WeekScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit) {
                 onNext = { anchor = anchor.plusWeeks(1); swapFrom = null },
             )
         }
+        item { ProgressToggle(month = false, onChange = onToggle) }
 
         if (state.plan == null) {
             item {
@@ -91,7 +103,7 @@ fun WeekScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit) {
                     Stat(num(weekTarget), "Target", Modifier.weight(1f))
                 }
                 val daysSoFar = dates.count { !it.isAfter(today) }
-                val plannedSoFar = targets.take(daysSoFar).sum()
+                val plannedSoFar = dates.take(daysSoFar).sumOf { targets[WeekPlanner.dayIndex(it)] }
                 if (daysSoFar in 1..6) {
                     val diff = plannedSoFar - weekEaten.calories
                     Text(
@@ -124,7 +136,7 @@ fun WeekScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit) {
             SectionCard(padding = 8.dp) {
                 dates.forEachIndexed { i, d ->
                     val e = eatenPerDay[i]
-                    val target = targets[i]
+                    val target = targets[WeekPlanner.dayIndex(d)]
                     val selected = swapFrom == i
                     Column(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
@@ -134,7 +146,10 @@ fun WeekScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit) {
                                 when {
                                     from == null -> swapFrom = i
                                     from == i -> swapFrom = null
-                                    else -> { vm.swapDays(anchor, from, i); swapFrom = null }
+                                    else -> {
+                                        vm.swapDays(anchor, WeekPlanner.dayIndex(dates[from]), WeekPlanner.dayIndex(d))
+                                        swapFrom = null
+                                    }
                                 }
                             }
                             .padding(horizontal = 16.dp, vertical = 12.dp),
@@ -143,7 +158,7 @@ fun WeekScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit) {
                             Text(d.format(DateTimeFormatter.ofPattern("EEEE")),
                                 fontWeight = if (d == today) FontWeight.Bold else FontWeight.Medium,
                                 color = if (d == today) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
-                            if (zigzag && WeekPlanner.isHighDay(targets, i)) {
+                            if (zigzag && WeekPlanner.isHighDay(targets, WeekPlanner.dayIndex(d))) {
                                 Spacer(Modifier.width(6.dp))
                                 Icon(Icons.Filled.Bolt, "High day", Modifier.size(16.dp), tint = Amber)
                             }
@@ -151,8 +166,18 @@ fun WeekScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit) {
                             Text("${num(e.calories)} / ${num(target)}", style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
+                        val log = state.dayLogs[d.toString()]
+                        val checkIn = listOfNotNull(
+                            log?.weightKg?.let { "%.1f".format(ChatExport.weightIn(it, ChatExport.units(state))) + " " + ChatExport.weightLabel(ChatExport.units(state)) },
+                            if (log?.gym == true) "Gym" else null,
+                            if (log?.cardio == true) "Cardio" else null,
+                            log?.waistCm?.let { "waist " + "%.1f".format(ChatExport.waistIn(it, ChatExport.units(state))) + " " + ChatExport.waistLabel(ChatExport.units(state)) },
+                        )
+                        if (checkIn.isNotEmpty()) Text(checkIn.joinToString(" · "), style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                         Spacer(Modifier.height(8.dp))
-                        ProgressBar(if (target > 0) (e.calories / target).toFloat() else 0f, Teal, 6.dp)
+                        ProgressBar(if (target > 0) (e.calories / target).toFloat() else 0f, LocalAppColors.current.calories, 6.dp)
                     }
                 }
             }
@@ -162,6 +187,14 @@ fun WeekScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                 TextButton(onClick = { vm.resetWeek(anchor) }) {
                     Text("Reset this week to the original schedule", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        if (!dates.first().isAfter(today)) item {
+            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.Center) {
+                Button(onClick = { copy(ChatExport.text(state, dates.first(), dates.first(), today)) }) {
+                    Icon(Icons.Filled.ContentCopy, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+                    Text("Copy week for ChatGPT")
                 }
             }
         }

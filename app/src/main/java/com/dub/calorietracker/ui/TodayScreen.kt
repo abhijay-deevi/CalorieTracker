@@ -99,7 +99,7 @@ fun TodayScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit) {
     val plan = state.plan
     val targets = WeekPlanner.weekTargets(state, date)
     val dayCal = WeekPlanner.dayTarget(state, date)
-    val goal = WeekPlanner.macroTargets(dayCal, state.macros)
+    val goal = WeekPlanner.macroTargets(dayCal, state)
     val eaten = WeekPlanner.eaten(state.entries, date)
     val dayEntries = state.entries.filter { it.date == date.toString() }.sortedBy { it.time }
     val zigzag = WeekPlanner.isZigzag(state)
@@ -169,10 +169,9 @@ fun TodayScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit) {
                     }
                 }
                 if (laterHigh != null) {
-                    val laterDate = WeekPlanner.weekStart(date).plusDays(laterHigh.toLong())
                     TextButton(onClick = { vm.useHighDay(date) }) {
-                        Text("Use ${laterDate.format(DateTimeFormatter.ofPattern("EEEE"))}'s higher calories " +
-                            "(${num(targets[laterHigh])}) today")
+                        Text("Use ${laterHigh.format(DateTimeFormatter.ofPattern("EEEE"))}'s higher calories " +
+                            "(${num(targets[WeekPlanner.dayIndex(laterHigh)])}) today")
                     }
                 }
             }
@@ -279,6 +278,7 @@ fun TodayScreen(vm: AppViewModel, modifier: Modifier, onSetUpPlan: () -> Unit) {
                 if (dayEntries.isNotEmpty()) Spacer(Modifier.height(10.dp))
             }
         }
+
         item { Spacer(Modifier.height(16.dp)) }
     }
 

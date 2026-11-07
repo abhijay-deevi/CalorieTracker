@@ -221,7 +221,7 @@ fun CaptureScreen(vm: AppViewModel, onClose: () -> Unit) {
                             Box(
                                 Modifier.matchParentSize().clip(RoundedCornerShape(12.dp))
                                     .background(Color.DarkGray)
-                                    .border(if (bigIndex == i) 3.dp else 2.dp, if (bigIndex == i) AccentBlue else Color.White, RoundedCornerShape(12.dp))
+                                    .border(if (bigIndex == i) 3.dp else 2.dp, if (bigIndex == i) MaterialTheme.colorScheme.primary else Color.White, RoundedCornerShape(12.dp))
                                     .clickable { viewing = if (viewing == i) null else i },
                             ) {
                                 if (bmp != null) Image(bmp.asImageBitmap(), "Photo ${i + 1}", Modifier.matchParentSize(), contentScale = ContentScale.Crop)

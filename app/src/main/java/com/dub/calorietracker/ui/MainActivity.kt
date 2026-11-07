@@ -5,6 +5,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.SystemBarStyle
+import androidx.compose.runtime.LaunchedEffect
+import com.dub.calorietracker.data.ThemeMode
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -17,7 +20,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.Restaurant
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.MonitorWeight
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.IconButton
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.TextButton
@@ -29,10 +38,8 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -63,9 +70,9 @@ import androidx.compose.ui.draw.clip
 
 enum class Tab(val label: String, val icon: ImageVector) {
     TODAY("Today", Icons.Filled.Restaurant),
-    WEEK("Week", Icons.Filled.CalendarMonth),
+    WEEK("Progress", Icons.Filled.CalendarMonth),
     PLAN("Plan", Icons.Filled.Calculate),
-    SETTINGS("Settings", Icons.Filled.Settings),
+    CHECKIN("Check-in", Icons.Filled.MonitorWeight),
 }
 
 class MainActivity : ComponentActivity() {
@@ -74,40 +81,23 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { AppTheme { App(vm) } }
+        setContent {
+            val state by vm.state.collectAsStateWithLifecycle()
+            val dark = when (state.theme.mode) {
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+            }
+            // Status/navigation bar icons follow the app's light/dark choice, not just the phone's.
+            LaunchedEffect(dark) {
+                val t = android.graphics.Color.TRANSPARENT
+                val style = if (dark) SystemBarStyle.dark(t) else SystemBarStyle.light(t, t)
+                enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+            }
+            AppTheme(state.theme.accent, dark) { App(vm) }
+        }
     }
 }
-
-/** Fixed, calm palette (no wallpaper-based dynamic color) for a clean, consistent look. */
-private val LightScheme = lightColorScheme(
-    primary = AccentBlue, onPrimary = Color.White,
-    primaryContainer = Color(0xFFE3F1FC), onPrimaryContainer = Color(0xFF0E4C7A),
-    secondary = Teal, onSecondary = Color.White,
-    secondaryContainer = Color(0xFFE2F6F1), onSecondaryContainer = Color(0xFF175C4E),
-    tertiary = Amber, tertiaryContainer = Color(0xFFFFF4DE), onTertiaryContainer = Color(0xFF6B4A00),
-    background = Color(0xFFF5F7FA), onBackground = Color(0xFF3A4351),
-    surface = Color.White, onSurface = Color(0xFF3A4351),
-    surfaceVariant = Color(0xFFECEFF3), onSurfaceVariant = Color(0xFF7D8695),
-    surfaceContainerLowest = Color.White, surfaceContainerLow = Color.White,
-    surfaceContainer = Color.White, surfaceContainerHigh = Color.White, surfaceContainerHighest = Color(0xFFF1F3F6),
-    outline = Color(0xFFD5DAE1), outlineVariant = Color(0xFFEAEDF1),
-    error = OverColor, errorContainer = Color(0xFFFDECEC), onErrorContainer = Color(0xFF8A1F1F),
-)
-
-private val DarkScheme = darkColorScheme(
-    primary = Color(0xFF5DB2F0), onPrimary = Color(0xFF00243F),
-    primaryContainer = Color(0xFF173A55), onPrimaryContainer = Color(0xFFD3E9FA),
-    secondary = Teal, onSecondary = Color(0xFF00382D),
-    secondaryContainer = Color(0xFF1C3D36), onSecondaryContainer = Color(0xFFC9F1E7),
-    tertiary = Amber, tertiaryContainer = Color(0xFF3F3218), onTertiaryContainer = Color(0xFFFFE3AE),
-    background = Color(0xFF111418), onBackground = Color(0xFFE4E7EC),
-    surface = Color(0xFF1B1F25), onSurface = Color(0xFFE4E7EC),
-    surfaceVariant = Color(0xFF2B3139), onSurfaceVariant = Color(0xFF9AA3B1),
-    surfaceContainerLowest = Color(0xFF1B1F25), surfaceContainerLow = Color(0xFF1B1F25),
-    surfaceContainer = Color(0xFF1B1F25), surfaceContainerHigh = Color(0xFF22272E), surfaceContainerHighest = Color(0xFF2A3038),
-    outline = Color(0xFF3A414B), outlineVariant = Color(0xFF2A3038),
-    error = OverColor, errorContainer = Color(0xFF4A1E1E), onErrorContainer = Color(0xFFFFD9D9),
-)
 
 /** Chakra Petch (SIL Open Font License) — squared, techy letterforms used for all text. */
 private val AppFont = FontFamily(
@@ -117,7 +107,7 @@ private val AppFont = FontFamily(
     Font(R.font.chakra_petch_bold, FontWeight.Bold),
 )
 
-private val AppTypography = Typography().let { t ->
+internal val AppTypography = Typography().let { t ->
     fun TextStyle.f() = copy(fontFamily = AppFont)
     t.copy(
         displayLarge = t.displayLarge.f(), displayMedium = t.displayMedium.f(), displaySmall = t.displaySmall.f(),
@@ -129,11 +119,6 @@ private val AppTypography = Typography().let { t ->
 }
 
 @Composable
-fun AppTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = if (isSystemInDarkTheme()) DarkScheme else LightScheme, typography = AppTypography, content = content)
-}
-
-@Composable
 fun App(vm: AppViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
     val pending by vm.pending.collectAsStateWithLifecycle()
@@ -141,6 +126,8 @@ fun App(vm: AppViewModel) {
     var tab by rememberSaveable { mutableStateOf(if (state.plan == null) Tab.PLAN else Tab.TODAY) }
     // The camera screen opens from the camera button in the middle of the bottom bar.
     var showCapture by rememberSaveable { mutableStateOf(false) }
+    // Settings opens from the gear on the Check-in tab.
+    var showSettings by rememberSaveable { mutableStateOf(false) }
     // Bumped to reset the capture screen (clear photo + note) after a meal is logged.
     var captureSession by rememberSaveable { mutableIntStateOf(0) }
 
@@ -160,6 +147,16 @@ fun App(vm: AppViewModel) {
                 firstRun = true,
                 onDone = { tab = Tab.TODAY },
             )
+        }
+    } else if (showSettings) {
+        BackHandler { showSettings = false }
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.systemBarsPadding().imePadding()) {
+                Row(Modifier.padding(start = 8.dp, top = 8.dp)) {
+                    IconButton(onClick = { showSettings = false }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+                }
+                SettingsScreen(vm, Modifier.weight(1f))
+            }
         }
     } else if (showCapture) {
         key(captureSession) { CaptureScreen(vm, onClose = ::closeCapture) }
@@ -197,16 +194,17 @@ fun App(vm: AppViewModel) {
                     colors = itemColors,
                 )
                 TabItem(Tab.PLAN)
-                TabItem(Tab.SETTINGS)
+                TabItem(Tab.CHECKIN)
             }
         }
     ) { padding ->
         val mod = Modifier.padding(padding).consumeWindowInsets(padding).imePadding()
         when (tab) {
             Tab.TODAY -> TodayScreen(vm, mod, onSetUpPlan = { tab = Tab.PLAN })
-            Tab.WEEK -> WeekScreen(vm, mod, onSetUpPlan = { tab = Tab.PLAN })
+            Tab.WEEK -> WeekScreen(vm, mod, onSetUpPlan = { tab = Tab.PLAN },
+                onOpenDay = { vm.selectedDate.value = it; tab = Tab.TODAY })
             Tab.PLAN -> PlanScreen(vm, mod, onDone = { tab = Tab.TODAY })
-            Tab.SETTINGS -> SettingsScreen(vm, mod)
+            Tab.CHECKIN -> CheckInScreen(vm, mod, onOpenSettings = { showSettings = true })
         }
     }
 
@@ -218,6 +216,8 @@ fun App(vm: AppViewModel) {
             text = { Text(msg) },
         )
     }
+
+    RestoreDialog(vm)
 
     pending?.let { p ->
         val busy by vm.busy.collectAsStateWithLifecycle()

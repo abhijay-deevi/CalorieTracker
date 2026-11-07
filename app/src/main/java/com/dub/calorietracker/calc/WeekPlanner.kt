@@ -3,9 +3,7 @@ package com.dub.calorietracker.calc
 import com.dub.calorietracker.data.AppState
 import com.dub.calorietracker.data.FoodEntry
 import com.dub.calorietracker.data.MacroSplit
-import java.time.DayOfWeek
 import java.time.LocalDate
-import java.time.temporal.TemporalAdjusters
 import kotlin.math.roundToInt
 
 data class Macros(val calories: Double, val protein: Double, val carbs: Double, val fat: Double) {
@@ -13,20 +11,23 @@ data class Macros(val calories: Double, val protein: Double, val carbs: Double, 
     companion object { val ZERO = Macros(0.0, 0.0, 0.0, 0.0) }
 }
 
-/** Week math: weeks run Sunday → Saturday. */
+/** Week math: weeks run Sunday → Saturday. Calorie lists are indexed by weekday, 0 = Sunday … 6 = Saturday. */
 object WeekPlanner {
-    fun weekStart(date: LocalDate): LocalDate =
-        date.with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY))
+    val dayNames = listOf("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
 
-    /** 0 = Sunday … 6 = Saturday */
+    /** The Sunday of the week containing [date]. */
+    fun weekStart(date: LocalDate): LocalDate = date.minusDays(dayIndex(date).toLong())
+
+    /** Weekday: 0 = Sunday … 6 = Saturday */
     fun dayIndex(date: LocalDate): Int = date.dayOfWeek.value % 7
 
+    /** The 7 dates (Sunday → Saturday) of the week containing [date]. */
     fun weekDates(date: LocalDate): List<LocalDate> {
         val start = weekStart(date)
         return (0..6).map { start.plusDays(it.toLong()) }
     }
 
-    /** The 7 calorie targets for the week containing [date], with any day swaps applied. */
+    /** The 7 calorie targets (indexed by weekday) for the week containing [date], with any day swaps applied. */
     fun weekTargets(state: AppState, date: LocalDate): List<Int> {
         val plan = state.plan ?: return List(7) { 0 }
         return state.weekOverrides[weekStart(date).toString()] ?: plan.weekTemplate
@@ -34,6 +35,20 @@ object WeekPlanner {
 
     fun dayTarget(state: AppState, date: LocalDate): Int = weekTargets(state, date)[dayIndex(date)]
 
+    /**
+     * Macro goals for a day with [calories]. Protein and fat are fixed grams from the plan (same every day);
+     * carbs take the rest, so high days mean more carbs, not more protein.
+     */
+    fun macroTargets(calories: Int, state: AppState): Macros {
+        val plan = state.plan
+        if (plan != null && plan.proteinG > 0) {
+            return Macros(calories.toDouble(), plan.proteinG.toDouble(),
+                Calculator.carbGrams(calories, plan.proteinG, plan.fatG).toDouble(), plan.fatG.toDouble())
+        }
+        return macroTargets(calories, state.macros)
+    }
+
+    /** Older plans: percentages of each day's calories. */
     fun macroTargets(calories: Int, split: MacroSplit): Macros = Macros(
         calories.toDouble(),
         protein = calories * split.proteinPct / 100.0 / 4.0,
@@ -56,7 +71,7 @@ object WeekPlanner {
         return targets[index] > avg + 1
     }
 
-    /** Returns a new state with days [a] and [b] of the week containing [date] swapped. */
+    /** Returns a new state with weekdays [a] and [b] (0 = Sunday) of the week containing [date] swapped. */
     fun swapDays(state: AppState, date: LocalDate, a: Int, b: Int): AppState {
         if (a == b) return state
         val targets = weekTargets(state, date).toMutableList()
@@ -68,12 +83,12 @@ object WeekPlanner {
         return state.copy(weekOverrides = overrides)
     }
 
-    /** The later day this week with the highest target above today's, or null if none. */
-    fun bestLaterHighDay(state: AppState, date: LocalDate): Int? {
+    /** The later day this week with the highest target above [date]'s, or null if none. */
+    fun bestLaterHighDay(state: AppState, date: LocalDate): LocalDate? {
         val targets = weekTargets(state, date)
-        val i = dayIndex(date)
-        val today = targets[i]
-        return (i + 1..6).filter { targets[it] > today }.maxByOrNull { targets[it] }
+        val today = targets[dayIndex(date)]
+        return weekDates(date).filter { it.isAfter(date) && targets[dayIndex(it)] > today }
+            .maxByOrNull { targets[dayIndex(it)] }
     }
 
     /**
@@ -86,10 +101,9 @@ object WeekPlanner {
         if (date != today) return state
         val eaten = eaten(state.entries, date).calories
         if (eaten <= dayTarget(state, date)) return state
-        val later = bestLaterHighDay(state, date) ?: return state
-        val laterDate = weekStart(date).plusDays(later.toLong())
+        val laterDate = bestLaterHighDay(state, date) ?: return state
         val dayName = laterDate.dayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.getDefault())
-        val swapped = swapDays(state, date, dayIndex(date), later)
+        val swapped = swapDays(state, date, dayIndex(date), dayIndex(laterDate))
         val newTarget = dayTarget(swapped, date)
         val msg = "You went over today's regular target, so today is now your higher-calorie day " +
             "($newTarget cal). $dayName is now ${dayTarget(swapped, laterDate)} cal."
