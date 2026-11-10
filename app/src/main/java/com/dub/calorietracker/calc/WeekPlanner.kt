@@ -11,17 +11,23 @@ data class Macros(val calories: Double, val protein: Double, val carbs: Double, 
     companion object { val ZERO = Macros(0.0, 0.0, 0.0, 0.0) }
 }
 
-/** Week math: weeks run Sunday → Saturday. Calorie lists are indexed by weekday, 0 = Sunday … 6 = Saturday. */
+/**
+ * Week math: weeks run Monday → Sunday. Calorie lists (plan template, day swaps) are indexed by weekday,
+ * 0 = Sunday … 6 = Saturday, so each weekday keeps its own target (zigzag high days stay on Saturday and Sunday).
+ */
 object WeekPlanner {
     val dayNames = listOf("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
 
-    /** The Sunday of the week containing [date]. */
-    fun weekStart(date: LocalDate): LocalDate = date.minusDays(dayIndex(date).toLong())
+    /** Weekday indexes in display order, Monday first: 1, 2, 3, 4, 5, 6, 0. */
+    val mondayFirst = listOf(1, 2, 3, 4, 5, 6, 0)
+
+    /** The Monday of the week containing [date]. */
+    fun weekStart(date: LocalDate): LocalDate = date.minusDays(((dayIndex(date) + 6) % 7).toLong())
 
     /** Weekday: 0 = Sunday … 6 = Saturday */
     fun dayIndex(date: LocalDate): Int = date.dayOfWeek.value % 7
 
-    /** The 7 dates (Sunday → Saturday) of the week containing [date]. */
+    /** The 7 dates (Monday → Sunday) of the week containing [date]. */
     fun weekDates(date: LocalDate): List<LocalDate> {
         val start = weekStart(date)
         return (0..6).map { start.plusDays(it.toLong()) }

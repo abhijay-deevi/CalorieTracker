@@ -170,23 +170,37 @@ class LogicTest {
         fun food(id: String, date: String, cal: Double, p: Double) = FoodEntry(id, date, 0, id, cal, p, 0.0, 0.0)
         val s = AppState(
             plan = plan,
-            entries = listOf(food("a", "2026-10-26", 2000.0, 150.0), food("b", "2026-10-27", 2200.0, 170.0), food("c", "2026-11-02", 1900.0, 140.0)),
+            entries = listOf(food("a", "2026-10-27", 2000.0, 150.0), food("b", "2026-10-28", 2200.0, 170.0), food("c", "2026-11-03", 1900.0, 140.0)),
             dayLogs = mapOf(
-                "2026-10-25" to DayLog(weightKg = Calculator.lbToKg(182.0), waistCm = 34.0 * 2.54),
-                "2026-10-26" to DayLog(weightKg = Calculator.lbToKg(181.0), gym = true, cardio = true),
-                "2026-10-28" to DayLog(gym = true),
-                "2026-11-02" to DayLog(weightKg = Calculator.lbToKg(180.4), cardio = true),
+                "2026-10-26" to DayLog(weightKg = Calculator.lbToKg(182.0), waistCm = 34.0 * 2.54),
+                "2026-10-27" to DayLog(weightKg = Calculator.lbToKg(181.0), gym = true, cardio = true),
+                "2026-10-29" to DayLog(gym = true),
+                "2026-11-03" to DayLog(weightKg = Calculator.lbToKg(180.4), cardio = true),
             ),
         )
         val ce = com.dub.calorietracker.data.ChatExport
-        val t = ce.text(s, LocalDate.parse("2026-10-25"), LocalDate.parse("2026-11-07"), today = LocalDate.parse("2026-11-04"))
+        val t = ce.text(s, LocalDate.parse("2026-10-26"), LocalDate.parse("2026-11-08"), today = LocalDate.parse("2026-11-05"))
+        assert(t.contains("weeks run Monday to Sunday")) { t }
         assert(t.contains("My plan: 2,100 cal/day on average, protein goal 160 g/day.")) { t }
         fun block(vararg lines: String) = assert(t.contains(lines.joinToString("\n"))) { t }
-        block("Week of Oct 25 - Oct 31", "- Morning weight: Sun 182.0, Mon 181.0 (average 181.5)", "- Waist: 34.0 in",
+        block("Week of Oct 26 - Nov 1", "- Morning weight: Mon 182.0, Tue 181.0 (average 181.5)", "- Waist: 34.0 in",
             "- Intake: averaged 2,100 cal/day and 160 g protein/day (2 of 7 days logged)", "- Gym sessions: 2", "- Cardio sessions: 1")
-        block("Week of Nov 1 - Nov 7 (in progress, through Wed)", "- Morning weight: Mon 180.4", "- Waist: not measured",
+        block("Week of Nov 2 - Nov 8 (in progress, through Thu)", "- Morning weight: Tue 180.4", "- Waist: not measured",
             "- Intake: averaged 1,900 cal/day and 140 g protein/day (1 of 4 days logged)", "- Gym sessions: 0", "- Cardio sessions: 1")
-        assert(!t.contains("Nov 8")) { t } // weeks that haven't started are left out
+        assert(!t.contains("Nov 9")) { t } // weeks that haven't started are left out
+    }
+
+    @Test fun weeksRunMondayToSunday() {
+        val sun = LocalDate.of(2026, 11, 8)
+        assertEquals(LocalDate.of(2026, 11, 2), WeekPlanner.weekStart(sun))               // Sunday ends the week
+        assertEquals(LocalDate.of(2026, 11, 9), WeekPlanner.weekStart(sun.plusDays(1)))   // Monday starts a new one
+        assertEquals(LocalDate.of(2026, 11, 2), WeekPlanner.weekStart(LocalDate.of(2026, 11, 2)))
+        assertEquals(sun, WeekPlanner.weekDates(sun).last())
+        // Zigzag high days stay on Saturday and Sunday — now the last two days of the week.
+        val template = Calculator.weekTemplate(m, 2087, Sex.MALE, ScheduleType.ZIGZAG_1)
+        val plan = Plan(Profile(30, Sex.MALE, 180.0, 80.0, ActivityLevel.MODERATE), m, Goal.LOSS, 2087, ScheduleType.ZIGZAG_1, template)
+        val s = AppState(plan = plan)
+        assertEquals(listOf(1887, 1887, 1887, 1887, 1887, 2587, 2587), WeekPlanner.weekDates(sun).map { WeekPlanner.dayTarget(s, it) })
     }
 
     @Test fun pasteParser() {

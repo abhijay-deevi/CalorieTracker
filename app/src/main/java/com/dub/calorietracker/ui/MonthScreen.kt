@@ -103,13 +103,13 @@ fun MonthScreen(vm: AppViewModel, modifier: Modifier, onToggle: (Boolean) -> Uni
         item {
             SectionCard(padding = 10.dp) {
                 Row(Modifier.fillMaxWidth()) {
-                    listOf("S", "M", "T", "W", "T", "F", "S").forEach {
+                    listOf("M", "T", "W", "T", "F", "S", "S").forEach {
                         Text(it, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     }
                 }
                 Spacer(Modifier.height(4.dp))
-                val lead = WeekPlanner.dayIndex(first)
+                val lead = (WeekPlanner.dayIndex(first) + 6) % 7 // Monday-first columns
                 val cells: List<LocalDate?> = List(lead) { null } + (1..month.lengthOfMonth()).map { month.atDay(it) }
                 cells.chunked(7).forEach { week ->
                     Row(Modifier.fillMaxWidth()) {

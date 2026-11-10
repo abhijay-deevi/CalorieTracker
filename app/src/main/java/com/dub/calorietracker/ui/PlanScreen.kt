@@ -480,7 +480,8 @@ private fun ScheduleOption(type: ScheduleType, week: List<Int>, proteinG: Int, f
                 }
             }
             Spacer(Modifier.height(6.dp))
-            week.forEachIndexed { i, c ->
+            WeekPlanner.mondayFirst.forEach { i ->
+                val c = week[i]
                 Row(Modifier.fillMaxWidth().padding(vertical = 1.dp)) {
                     Text(WeekPlanner.dayNames[i], Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                     Text("${num(c)} cal", style = MaterialTheme.typography.bodyMedium)
@@ -495,7 +496,8 @@ private fun ScheduleOption(type: ScheduleType, week: List<Int>, proteinG: Int, f
 @Composable
 private fun ScheduleTable(week: List<Int>, proteinG: Int, fatG: Int) {
     SectionCard {
-        week.forEachIndexed { i, c ->
+        WeekPlanner.mondayFirst.forEach { i ->
+            val c = week[i]
             Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
                 Text(WeekPlanner.dayNames[i], Modifier.weight(1f))
                 Text("${num(c)} cal")

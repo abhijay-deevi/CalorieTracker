@@ -8,10 +8,10 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
 
-/** One Sunday–Saturday week of check-ins and food, in the user's units. Future days are left out. */
+/** One Monday–Sunday week of check-ins and food, in the user's units. Future days are left out. */
 data class WeekSummary(
     val start: LocalDate,
-    /** Last day included: Saturday, or today for the current week. */
+    /** Last day included: Sunday, or today for the current week. */
     val end: LocalDate,
     val inProgress: Boolean,
     val weights: List<Pair<LocalDate, Double>>,
@@ -99,7 +99,7 @@ object ChatExport {
         val wl = weightLabel(units)
         val plan = state.plan
         val sb = StringBuilder()
-        sb.appendLine("My progress log (weeks run Sunday to Saturday). Weight is morning body weight in $wl; waist in ${waistLabel(units)}.")
+        sb.appendLine("My progress log (weeks run Monday to Sunday). Weight is morning body weight in $wl; waist in ${waistLabel(units)}.")
         if (plan != null) {
             val protein = if (plan.proteinG > 0) plan.proteinG.toDouble() else WeekPlanner.macroTargets(plan.dailyTarget, state).protein
             sb.appendLine("My plan: ${n(plan.dailyTarget.toDouble())} cal/day on average, protein goal ${n(protein)} g/day.")

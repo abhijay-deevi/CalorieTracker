@@ -190,7 +190,7 @@ data class AppState(
     val plan: Plan? = null,
     val entries: List<FoodEntry> = emptyList(),
     val savedFoods: List<SavedFood> = emptyList(),
-    /** Per-week calorie overrides after day swaps. Key = ISO date of that week's Sunday. */
+    /** Per-week calorie overrides after day swaps (indexed by weekday). Key = ISO date of that week's Monday. */
     val weekOverrides: Map<String, List<Int>> = emptyMap(),
     /** Most recent automatic high-day shift message, keyed by ISO date it happened. */
     val shiftNotices: Map<String, String> = emptyMap(),
